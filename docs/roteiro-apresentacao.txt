@@ -1,0 +1,113 @@
+PATASPERTO - ROTEIRO DA APRESENTAÇÃO
+Link: https://patasperto.onrender.com
+Abrir o link 2 minutos antes (o site "acorda" em cerca de 1 minuto).
+Contas de teste (senha demo123): cliente ana.ribeiro@exemplo.com / clínica contato@vidapet.exemplo
+Cada fala tem cerca de 2 minutos. Regra do professor: ninguém explica código. Fale do problema, do que a pessoa vê na tela e do porquê.
+
+ORDEM
+1. Integrante 1 - Abertura: o problema e a ideia
+2. Integrante 2 - Loja, carrinho e compra
+3. Integrante 3 - A inteligência artificial
+4. Steves - Design do site e mapa das clínicas
+5. Integrante 4 - Emergência e o lado da clínica
+6. Integrante 5 - Segurança, privacidade e o fechamento (venda)
+
+
+========================================
+1. INTEGRANTE 1 - ABERTURA: O PROBLEMA E A IDEIA
+========================================
+O que mostrar: a página inicial do site.
+
+O que falar:
+"Quem tem pet conhece dois problemas. O primeiro: comprar produto e não saber se tem uma loja perto, principalmente o petshop de bairro, que muitas vezes nem está na internet. O segundo: quando o pet tem algum sintoma, o tutor não sabe que tipo de veterinário procurar, nem qual clínica está aberta naquela hora.
+O PatasPerto junta as duas coisas. É um marketplace que conecta o tutor às lojas mais próximas e, com o que ele compra, ajuda a indicar qual especialidade veterinária o pet precisa e onde tem uma clínica perto.
+A ideia central é que a loja não é enfeite: cada compra vira informação. Se o tutor compra muito antipulgas, por exemplo, isso diz algo sobre a saúde do pet. Os dois lados ganham: o tutor recebe orientação e a clínica recebe clientes que realmente precisam dela.
+Agora cada integrante vai mostrar a parte que construiu."
+
+Se o professor perguntar "quem é o cliente de vocês?":
+"Dois públicos: o tutor, que usa de graça, e as clínicas e lojas, que pagam para aparecer como parceiras e ter acesso ao painel."
+
+
+========================================
+2. INTEGRANTE 2 - LOJA, CARRINHO E COMPRA
+========================================
+O que mostrar: entrar com a conta da Ana, buscar "antipulgas", ordenar por preço ou distância, abrir um produto, colocar no carrinho e finalizar a compra.
+
+O que falar:
+"Esta é a loja. O tutor busca um produto e vê as ofertas de várias lojas, podendo ordenar pelo menor preço ou pela loja mais perto.
+Cada conta tem o seu próprio carrinho: se outra pessoa entrar neste computador, ela não vê o meu carrinho.
+Na finalização, o cliente escolhe entre entrega e retirada e a forma de pagamento. O pagamento é simulado, de propósito: por ser um projeto acadêmico, o site nunca pede nem guarda dados de cartão.
+O ponto mais importante: essa compra não termina aqui. Ela fica registrada no histórico do tutor, e é esse histórico que alimenta a inteligência artificial, que o próximo integrante vai mostrar."
+
+Se o professor perguntar "por que o pagamento é simulado?":
+"Para não lidar com dados financeiros reais num projeto de teste. Num produto real, usaríamos um intermediador de pagamento, como Mercado Pago ou Stripe, e o cartão nunca passaria pelo nosso servidor."
+
+
+========================================
+3. INTEGRANTE 3 - A INTELIGÊNCIA ARTIFICIAL
+========================================
+O que mostrar: aba Recomendação. Cão, 6 anos, situação "check-up" e pedir a recomendação (deve dar clínico geral). Depois comprar 1 antipulgas na loja, voltar e pedir de novo (deve mudar para dermatologia).
+
+O que falar:
+"Aqui o tutor conta como o pet está: espécie, idade e o que está acontecendo. A IA responde qual especialidade ele deve procurar e com que confiança.
+Ela aprendeu com 2.500 casos de exemplo, criados por nós com regras baseadas no dia a dia de uma clínica. Não usamos dados reais de pessoas, por causa da LGPD.
+O teste que mais mostra o valor do projeto: com um check-up comum, ela indica clínico geral. Agora eu compro um antipulgas na loja e peço de novo... e a indicação muda para dermatologia. A compra mudou a resposta da IA.
+Ela acerta cerca de 91% dos casos de teste, e o comportamento de compra responde por mais ou menos um terço da decisão. Um detalhe importante: a tela separa o que é IA, que indica a especialidade, do que é consulta ao banco de dados, que só filtra as clínicas. Assim fica claro o que é previsão e o que é dado."
+
+Se o professor perguntar "por que 91% e não 100%?":
+"Colocamos 8% de casos 'bagunçados' de propósito, porque na vida real nem todo pet segue a regra. Se desse 100%, provavelmente ela estaria só decorando os exemplos."
+
+
+========================================
+4. STEVES - DESIGN DO SITE E MAPA DAS CLÍNICAS
+========================================
+O que mostrar: o visual do site (a salsicha na marca, as cores), depois a aba Mapa. Digitar Indaiatuba, mudar o raio, abrir uma clínica e mostrar telefone, horário e "Como chegar". Mostrar também a separação entre cães e gatos e animais silvestres.
+
+O que falar:
+"Eu cuidei do design e do mapa.
+No design, escolhemos a cachorrinha salsicha como marca registrada, para o site ter uma identidade própria e não parecer um modelo pronto. As cores, os ícones e os botões seguem um padrão único em todas as telas, e o site funciona no celular.
+No mapa, o tutor usa o GPS ou digita a cidade e vê as clínicas veterinárias reais ao redor dele. Elas vêm do OpenStreetMap, um mapa aberto e colaborativo, somadas a clínicas que nós mesmos pesquisamos, porque o mapa aberto nem sempre está completo.
+Dá para escolher o raio de busca e ver o horário de funcionamento. Ao clicar numa clínica, aparecem telefone e o botão 'Como chegar'.
+Separamos as clínicas de cães e gatos das que atendem animais silvestres e exóticos, porque descobrimos que clínica geral normalmente não atende silvestre. Em Indaiatuba, por exemplo, fomos atrás e achamos clínicas que atendem.
+Um cuidado que tivemos: só aparecem clínicas reais. Nenhuma clínica inventada é mostrada para o tutor."
+
+Se o professor perguntar "e se o mapa aberto sair do ar?":
+"O site mostra as clínicas que nós pesquisamos e guarda a última busca. O tutor nunca fica com a tela vazia."
+
+
+========================================
+5. INTEGRANTE 4 - EMERGÊNCIA E O LADO DA CLÍNICA
+========================================
+O que mostrar: na Recomendação, situação "convulsão" (vai para emergência, com as clínicas abertas agora). Depois sair e entrar com a conta da clínica (contato@vidapet.exemplo) e mostrar o painel: visão geral, contatos e demanda da região.
+
+O que falar:
+"Quando a situação é grave, como convulsão ou intoxicação, o site entra no modo emergência: mostra primeiro as clínicas abertas agora e o caminho mais rápido. O botão de acionar o veterinário é simulado, nenhuma mensagem é enviada de verdade, porque é um teste.
+Agora o outro lado: a clínica. Ela tem uma conta própria com um painel de gestão de clientes.
+Em Contatos, aparecem os tutores que pediram para ser contatados. Isso só acontece se o tutor autorizar; sem a autorização, nada é enviado. A clínica acompanha cada contato pelas etapas: novo, em contato, agendado e atendido.
+Em Demanda da região, a clínica vê quais especialidades a IA mais indicou nos últimos 30, 90 ou 180 dias, e o painel aponta a oportunidade: a especialidade que mais cresceu. Esses números são anônimos, sem identificar nenhum tutor.
+As clínicas parceiras aparecem em destaque no mapa, na recomendação e na emergência. É isso que a clínica paga para ter."
+
+Se o professor perguntar "como vocês ganham dinheiro?":
+"Assinatura das clínicas parceiras: destaque nas telas, os pedidos de contato e o painel de demanda da região. O tutor continua usando de graça."
+
+
+========================================
+6. INTEGRANTE 5 - SEGURANÇA, PRIVACIDADE E FECHAMENTO (VENDA)
+========================================
+O que mostrar: o aviso de cookies; errar a senha 6 vezes para mostrar o bloqueio de 1 minuto; abrir um endereço que não existe (ex.: /teste) para mostrar a página 404.
+
+O que falar (segurança):
+"Tratamos a segurança como parte do produto, não como detalhe.
+Senhas erradas: depois de 5 erros seguidos, o login fica bloqueado por 1 minuto. Isso impede um robô de ficar tentando adivinhar senhas.
+Privacidade: seguimos a LGPD. Os dados de teste são fictícios, a IA aprende sem saber quem é o tutor e a clínica só recebe os dados de quem autorizou o contato. O site usa apenas os cookies necessários para funcionar, e avisa isso.
+Antes de publicar, passamos o projeto por uma ferramenta de análise de segurança e uma lista de 21 verificações. Também temos testes automáticos que tentam atacar o site e conferem que ele resiste.
+E o site está publicado na internet, fora do Google, acessível só por quem tem o link."
+
+O que falar (fechamento e venda):
+"Para fechar: o PatasPerto resolve dois problemas reais com um produto só. O tutor encontra o produto mais perto e descobre qual veterinário procurar. O petshop de bairro ganha presença online. A clínica recebe clientes que realmente precisam dela e entende a demanda da região.
+O que nos diferencia é que a loja alimenta a inteligência artificial: quanto mais o site é usado, melhor ele indica.
+Os próximos passos seriam usar dados reais com autorização, um banco de dados maior e pagamento de verdade. A base já está pronta, funcionando e segura.
+O PatasPerto é o caminho mais curto entre o pet e quem pode cuidar dele. Obrigado!"
+
+Se o professor perguntar "isso aguenta muita gente usando?":
+"Hoje está num plano gratuito, pensado para demonstração. Para crescer, trocaríamos o banco SQLite por um banco maior, como o PostgreSQL, e usaríamos um servidor pago que não 'dorme'. O site já foi organizado para essa troca."
