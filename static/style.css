@@ -645,3 +645,9 @@ a.btn-sos { display: flex; align-items: center; justify-content: center; gap: 8p
 .pagina-404 h1 { margin: 8px 0 0; font-family: var(--fonte-titulo); font-size: 28px; font-weight: 800; }
 .pagina-404 p { color: var(--texto-suave); }
 .pagina-404 .btn-prim { width: auto; padding: 14px 28px; text-decoration: none; }
+
+/* ---- aviso de cookies (só cookies essenciais) ---- */
+.aviso-cookies { position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 60; max-width: 760px; margin: 0 auto; display: flex; gap: 16px; align-items: center; padding: 16px 18px; background: var(--superficie); border: 1px solid var(--borda-campo); border-radius: 18px; box-shadow: 0 10px 30px rgba(59, 35, 22, .18); }
+.aviso-cookies p { margin: 0; font-size: 14px; line-height: 1.5; }
+.aviso-cookies .btn-prim { width: auto; margin: 0; flex: none; padding: 12px 20px; }
+@media (max-width: 560px) { .aviso-cookies { flex-direction: column; align-items: stretch; } }

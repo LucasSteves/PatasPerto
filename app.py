@@ -531,6 +531,8 @@ def api_login():
     senha_ok = check_password_hash(conta["senha_hash"] if conta else HASH_FALSO, str(corpo.get("senha") or "")[:200])
     if conta is None or not senha_ok:
         registrar_tentativa("login")
+        # DIAGNÓSTICO TEMPORÁRIO (remover): quantos proxies há antes do app no Render
+        app.logger.warning("login errado: remote_addr=%s xff=%s", request.remote_addr, request.headers.get("X-Forwarded-For"))
         return jsonify({"erro": "e-mail ou senha inválidos"}), 401
     return jsonify({"conta": _abrir_sessao(conta["id"])})
 

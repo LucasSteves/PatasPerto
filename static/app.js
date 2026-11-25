@@ -1356,6 +1356,15 @@ function renderPedidoConfirmado(r, itens, endereco) {
 $("btCarrinhoTopo").addEventListener("click", abrirCarrinho);
 salvarCarrinho();   // atualiza o contador com o que ficou salvo no navegador
 
+// Aviso de cookies: só há cookies ESSENCIAIS (sessão de login + carrinho/perfil/localização no navegador),
+// que a LGPD não exige consentimento para usar; o aviso é por transparência e some depois do "Entendi".
+(() => {
+  let visto = false; try { visto = !!localStorage.getItem("aviso_cookies"); } catch {}
+  const aviso = $("avisoCookies");
+  aviso.hidden = visto;
+  $("btCookiesOk").addEventListener("click", () => { try { localStorage.setItem("aviso_cookies", new Date().toISOString()); } catch {} aviso.hidden = true; });
+})();
+
 document.querySelectorAll(".chip").forEach(chip => chip.addEventListener("click", () => {
   document.querySelectorAll(".chip").forEach(c => c.classList.remove("ativo")); chip.classList.add("ativo"); ordemAtual = chip.dataset.ord; render();
 }));
