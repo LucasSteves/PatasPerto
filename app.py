@@ -36,11 +36,11 @@ import recomendador  # noqa: E402
 from gerar_dataset import SITUACOES  # noqa: E402  (as situações que o modelo conhece)
 
 app = Flask(__name__, static_folder=os.path.join(AQUI, "static"), static_url_path="/static")
-if os.environ.get("PATASPERTO_PROXY") == "1":
+_ATRAS_DO_PROXY = os.environ.get("PATASPERTO_PROXY") == "1"
+if _ATRAS_DO_PROXY:
     # Na nuvem (Render) todo acesso chega por um proxy: sem isto, request.remote_addr seria sempre o IP dele e o
-    # limite de tentativas bloquearia TODOS os usuários juntos. No Render há 2 saltos (medido no log em 25/11/2026:
-    # X-Forwarded-For = "<IP real>, <IP interno que muda a cada acesso>"), então x_for=2. Um IP forjado pelo
-    # usuário fica mais à esquerda e é ignorado. Só ligar atrás desse proxy: fora dele, o cabeçalho seria forjável.
+    # limite de tentativas bloquearia TODOS os usuários juntos. O IP do limite vem de _ip_cliente() (Cloudflare);
+    # o ProxyFix fica para o https (x_proto). Só ligar atrás desse proxy: fora dele, os cabeçalhos seriam forjáveis.
     from werkzeug.middleware.proxy_fix import ProxyFix
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=2, x_proto=1)
 
@@ -112,21 +112,29 @@ def erro_sem_detalhe(e):
 _tentativas = defaultdict(deque)
 
 
+def _ip_cliente():
+    """IP de quem acessa. No Render todo acesso passa pelo Cloudflare, que grava o IP real em CF-Connecting-IP
+    (e sobrescreve o que o usuário mandar); a lista X-Forwarded-For varia de tamanho e não é confiável sozinha."""
+    if _ATRAS_DO_PROXY:
+        return request.headers.get("CF-Connecting-IP") or request.remote_addr
+    return request.remote_addr
+
+
 def limite_excedido(acao, maximo, janela_s):
     """True se este IP já fez `maximo` tentativas de `acao` nos últimos `janela_s` segundos."""
-    agora, fila = time.monotonic(), _tentativas[(acao, request.remote_addr)]
+    agora, fila = time.monotonic(), _tentativas[(acao, _ip_cliente())]
     while fila and agora - fila[0] > janela_s:
         fila.popleft()
     return len(fila) >= maximo
 
 
 def registrar_tentativa(acao):
-    _tentativas[(acao, request.remote_addr)].append(time.monotonic())
+    _tentativas[(acao, _ip_cliente())].append(time.monotonic())
 
 
 def _muitas_tentativas(acao, janela_s):
     """429 dizendo quanto falta: o bloqueio acaba quando a tentativa mais antiga sai da janela."""
-    falta_s = math.ceil(janela_s - (time.monotonic() - _tentativas[(acao, request.remote_addr)][0]))
+    falta_s = math.ceil(janela_s - (time.monotonic() - _tentativas[(acao, _ip_cliente())][0]))
     minutos = max(1, math.ceil(falta_s / 60))
     resp = jsonify({"erro": f"Muitas tentativas. Tente de novo em {minutos} minuto{'s' if minutos > 1 else ''}."})
     resp.headers["Retry-After"] = str(max(1, falta_s))

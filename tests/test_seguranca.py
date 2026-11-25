@@ -148,3 +148,15 @@ def test_cookie_de_sessao_protegido(cliente):
     r = cliente.post("/api/login", json={"email": "ana.ribeiro@exemplo.com", "senha": "demo123"})
     cookie = r.headers["Set-Cookie"]
     assert "HttpOnly" in cookie and "SameSite=Lax" in cookie
+
+
+def test_limite_usa_o_ip_do_cloudflare_atras_do_proxy(cliente, monkeypatch):
+    import app as modulo
+    monkeypatch.setattr(modulo, "_ATRAS_DO_PROXY", True)
+    errado = {"email": "ana.ribeiro@exemplo.com", "senha": "errada"}
+    def tentar(ip, xff):
+        return cliente.post("/api/login", json=errado,
+                            headers={"CF-Connecting-IP": ip, "X-Forwarded-For": xff}).status_code
+    # o X-Forwarded-For muda a cada acesso (como no Render), mas o IP real é o mesmo: bloqueia na 6ª
+    assert [tentar("200.1.1.1", f"10.0.0.{n}") for n in range(6)] == [401] * 5 + [429]
+    assert tentar("200.2.2.2", "10.0.0.9") == 401                        # outro usuário não é bloqueado junto
