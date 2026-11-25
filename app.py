@@ -38,10 +38,11 @@ from gerar_dataset import SITUACOES  # noqa: E402  (as situações que o modelo 
 app = Flask(__name__, static_folder=os.path.join(AQUI, "static"), static_url_path="/static")
 if os.environ.get("PATASPERTO_PROXY") == "1":
     # Na nuvem (Render) todo acesso chega por um proxy: sem isto, request.remote_addr seria sempre o IP dele e o
-    # limite de tentativas bloquearia TODOS os usuários juntos. Só ligar atrás de um proxy confiável (1 salto):
-    # fora dele, qualquer um poderia forjar o cabeçalho X-Forwarded-For e fugir do limite.
+    # limite de tentativas bloquearia TODOS os usuários juntos. No Render há 2 saltos (medido no log em 25/11/2026:
+    # X-Forwarded-For = "<IP real>, <IP interno que muda a cada acesso>"), então x_for=2. Um IP forjado pelo
+    # usuário fica mais à esquerda e é ignorado. Só ligar atrás desse proxy: fora dele, o cabeçalho seria forjável.
     from werkzeug.middleware.proxy_fix import ProxyFix
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=2, x_proto=1)
 
 
 def _chave_secreta():
@@ -531,8 +532,6 @@ def api_login():
     senha_ok = check_password_hash(conta["senha_hash"] if conta else HASH_FALSO, str(corpo.get("senha") or "")[:200])
     if conta is None or not senha_ok:
         registrar_tentativa("login")
-        # DIAGNÓSTICO TEMPORÁRIO (remover): quantos proxies há antes do app no Render
-        app.logger.warning("login errado: remote_addr=%s xff=%s", request.remote_addr, request.headers.get("X-Forwarded-For"))
         return jsonify({"erro": "e-mail ou senha inválidos"}), 401
     return jsonify({"conta": _abrir_sessao(conta["id"])})
 
