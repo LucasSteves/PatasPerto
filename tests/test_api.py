@@ -12,11 +12,12 @@ def test_ofertas(cliente):
     assert {"produto", "loja", "preco"} <= set(ofertas[0])
 
 
-def test_clinicas_filtro_horario(cliente):
-    nomes = [c["nome"] for c in cliente.get("/api/clinicas?especialidade=odontologia&hora=23:00").get_json()]
-    assert nomes == ["Hosp. Vet. Bicho Feliz"]          # única 24h com odontologia
-    noturno = [c["nome"] for c in cliente.get("/api/clinicas?especialidade=emergencia&hora=03:00").get_json()]
-    assert "Plantão Vet Noturno" in noturno              # faixa 19:00–07:00 cruza a meia-noite
+def test_sem_localizacao_nao_mostra_clinicas(cliente):
+    """Só clínicas reais: sem GPS ou cidade, nada de clínicas fictícias, só o pedido de localização."""
+    r = cliente.get("/api/clinicas?meta=1&especialidade=odontologia&hora=23:00").get_json()
+    assert r["clinicas"] == [] and r["meta"]["fonte"] == "sem_posicao"
+    assert "localização" in r["meta"]["aviso"]
+    assert cliente.get("/api/clinicas").get_json() == []
 
 
 def test_recomendar_emergencia(cliente):
@@ -26,7 +27,7 @@ def test_recomendar_emergencia(cliente):
     corpo = r.get_json()
     assert corpo["ia"]["especialidade"] == "emergencia"
     assert corpo["ia"]["confianca"] > 0.5
-    assert all("emergencia" in c["especialidades"] for c in corpo["banco"]["clinicas"])
+    assert corpo["banco"]["clinicas"] == [] and corpo["banco"]["fonte"] == "sem_posicao"   # sem localização
 
 
 def test_recomendar_valida_entrada(cliente):
@@ -47,16 +48,6 @@ def test_metricas(cliente):
     assert "situacao" in m["importancias"]
 
 
-def test_coordenadas_para_o_mapa(cliente):
-    tutor = cliente.get("/api/tutores/1").get_json()
-    assert tutor["lat"] and tutor["lon"]
-    clinicas = cliente.get("/api/clinicas").get_json()
-    assert all(c["lat"] and c["lon"] for c in clinicas)
-    # posição no mapa coerente com a distância exibida (erro < 50 m)
-    import math
-    for c in clinicas:
-        d = math.hypot((c["lat"] - tutor["lat"]) * 111.32, (c["lon"] - tutor["lon"]) * 111.32 * math.cos(math.radians(tutor["lat"])))
-        assert abs(d - c["distancia_km"]) < 0.05
 
 
 # ---------------- clínicas reais (OpenStreetMap) — sem rede: Overpass simulado
@@ -102,21 +93,103 @@ def test_recomendar_com_posicao_usa_osm_e_relaxa_filtro(cliente, overpass_falso)
     assert len(r["banco"]["clinicas"]) == 3
 
 
-def test_openstreetmap_fora_do_ar_cai_para_demonstracao(cliente, monkeypatch):
-    """Overpass sem resposta (timeout) não pode virar erro 500: o mapa mostra as clínicas de demonstração."""
+def test_openstreetmap_fora_do_ar_sem_cache(cliente, monkeypatch):
+    """Overpass sem resposta (timeout) e sem cache: nem erro 500 nem clínica fictícia, só o aviso."""
     import clinicas_osm
     def fora_do_ar(*a, **k):
         raise TimeoutError("The read operation timed out")
     monkeypatch.setattr(clinicas_osm, "_consultar_overpass", fora_do_ar)
     monkeypatch.setattr(clinicas_osm, "_cache_get", lambda chave, vencido_ok=False: None)
-    r = cliente.get("/api/clinicas?meta=1&lat=-23.0908&lon=-47.2180&raio_km=5&hora=11:00")
+    r = cliente.get("/api/clinicas?meta=1&lat=-25.4284&lon=-49.2733&raio_km=5&hora=11:00")   # Curitiba: sem clínicas pesquisadas
     assert r.status_code == 200
     corpo = r.get_json()
-    assert corpo["meta"]["fonte"] == "demo" and "OpenStreetMap" in corpo["meta"]["aviso"]
-    assert corpo["clinicas"] and all("horario_texto" in c for c in corpo["clinicas"])
-    assert all(c["distancia_km"] > 15 for c in corpo["clinicas"])      # Sumaré fica longe de Indaiatuba
-    rec = cliente.post("/api/recomendar", json={"tutor_id": 1, "situacao": "convulsao", "hora": "03:00", "lat": -23.09, "lon": -47.21})
-    assert rec.status_code == 200 and rec.get_json()["banco"]["fonte"] == "demo"
+    assert corpo["clinicas"] == [] and corpo["meta"]["fonte"] == "indisponivel"
+    assert "OpenStreetMap" in corpo["meta"]["aviso"]
+    rec = cliente.post("/api/recomendar", json={"tutor_id": 1, "situacao": "convulsao", "hora": "03:00", "lat": -25.4284, "lon": -49.2733})
+    assert rec.status_code == 200 and rec.get_json()["banco"]["clinicas"] == []
+    assert rec.get_json()["ia"]["especialidade"] == "emergencia"          # a IA responde mesmo sem clínicas
+
+
+PERTO = {"lat": -23.0908, "lon": -47.2180}
+OVERPASS_REGIAO = {"elements": [
+    {"type": "node", "id": 10, "lat": -23.0950, "lon": -47.2200, "tags": {"amenity": "veterinary", "name": "Pet Centro"}},
+    {"type": "node", "id": 11, "lat": -23.1700, "lon": -47.2200,               # ~8,8 km
+     "tags": {"amenity": "veterinary", "name": "Clínica de Animais Silvestres e Exóticos", "opening_hours": "Mo-Fr 08:00-18:00; Sa 08:00-12:00"}},
+    {"type": "node", "id": 12, "lat": -22.9500, "lon": -47.2180, "tags": {"amenity": "veterinary", "name": "Hospital Vet 24h", "opening_hours": "24/7"}},
+]}
+
+
+@pytest.fixture
+def overpass_regiao(monkeypatch):
+    """Overpass simulado com cache em memória: conta quantas consultas de verdade saem."""
+    import clinicas_osm
+    cache, chamadas = {}, []
+    def consultar(lat, lon, raio_m):
+        chamadas.append(raio_m)
+        return OVERPASS_REGIAO
+    monkeypatch.setattr(clinicas_osm, "_consultar_overpass", consultar)
+    monkeypatch.setattr(clinicas_osm, "_cache_get", lambda chave, vencido_ok=False: cache.get(chave))
+    monkeypatch.setattr(clinicas_osm, "_cache_set", lambda chave, v: cache.__setitem__(chave, v))
+    return chamadas
+
+
+def test_raio_filtra_no_app_com_uma_consulta_so(overpass_regiao):
+    """Trocar o raio não consulta o Overpass de novo: busca a região uma vez e filtra pela distância."""
+    import clinicas_osm
+    nomes = lambda r: {c["nome"] for c in clinicas_osm.buscar_clinicas(PERTO["lat"], PERTO["lon"], r)}
+    assert nomes(2) == {"Pet Centro"}
+    assert nomes(10) == {"Pet Centro", "Clínica de Animais Silvestres e Exóticos"}
+    assert len(nomes(20)) == 3
+    assert overpass_regiao == [clinicas_osm.RAIO_BUSCA_KM * 1000]          # uma única consulta, no raio máximo
+
+
+def test_horario_em_portugues():
+    import clinicas_osm
+    assert clinicas_osm.horario_legivel("Mo-Fr 08:00-18:00; Sa 08:00-12:00") == "seg–sex 08:00–18:00; sáb 08:00–12:00"
+    assert clinicas_osm.horario_legivel("24/7") == "24h"
+    assert clinicas_osm.horario_legivel("Su,PH off") == "dom, feriados fechado"
+    assert clinicas_osm.horario_legivel("") == ""
+
+
+def test_publico_silvestres_e_domesticos(cliente, overpass_regiao):
+    base = "/api/clinicas?lat=-23.0908&lon=-47.2180&raio_km=5&publico="
+    so_osm = lambda r: [c for c in r.get_json() if c["fonte"] == "osm"]   # as pesquisadas pela equipe têm teste próprio
+    silvestres = so_osm(cliente.get(base + "silvestres"))         # silvestres: sempre no raio máximo (são raras)
+    assert [c["nome"] for c in silvestres] == ["Clínica de Animais Silvestres e Exóticos"]
+    assert silvestres[0]["atende_silvestres"] and silvestres[0]["horario_texto"] == "seg–sex 08:00–18:00; sáb 08:00–12:00"
+    domesticos = [c["nome"] for c in so_osm(cliente.get(base + "domesticos"))]
+    assert domesticos == ["Pet Centro"]                             # dentro dos 5 km e sem os silvestres
+    assert cliente.get(base + "dinossauros").status_code == 400
+
+
+INDAIATUBA = "lat=-23.0908356&lon=-47.2180677"
+
+
+def test_clinicas_pesquisadas_aparecem_mesmo_com_osm_fora(cliente, monkeypatch):
+    """As clínicas pesquisadas pela equipe (banco/clinicas_pesquisadas.json) não dependem do OpenStreetMap."""
+    import clinicas_osm
+    def fora(*a, **k):
+        raise TimeoutError("fora do ar")
+    monkeypatch.setattr(clinicas_osm, "_consultar_overpass", fora)
+    monkeypatch.setattr(clinicas_osm, "_cache_get", lambda chave, vencido_ok=False: None)
+    r = cliente.get(f"/api/clinicas?meta=1&publico=silvestres&hora=10:00&{INDAIATUBA}").get_json()
+    assert {c["nome"] for c in r["clinicas"]} == {"Clínica Veterinária Indavet", "Bicos & Focinhos Clínica Veterinária", "Villa Zoo Clínica Veterinária",
+                                                "Hospital-Escola Veterinário UniMAX"}
+    assert all(c["fonte"] == "equipe" and c["fonte_url"].startswith("https://") for c in r["clinicas"])
+    assert r["meta"]["fonte"] == "equipe" and "OpenStreetMap" in r["meta"]["aviso"]
+    perto = [c["nome"] for c in cliente.get(f"/api/clinicas?publico=domesticos&raio_km=2&{INDAIATUBA}").get_json()]
+    assert perto == ["Clínica Veterinária Indavet", "Bicos & Focinhos Clínica Veterinária"]   # raio de 2 km, por distância
+    longe = [c["nome"] for c in cliente.get(f"/api/clinicas?publico=domesticos&raio_km=10&{INDAIATUBA}").get_json()]
+    assert "Hospital Veterinário Vet Prado" in longe                                            # 24h, só cães e gatos
+    assert "Hospital Veterinário Vet Prado" not in {c["nome"] for c in r["clinicas"]}
+
+
+def test_clinicas_pesquisadas_vem_primeiro(cliente, overpass_regiao):
+    lista = cliente.get("/api/clinicas?publico=domesticos&raio_km=10&lat=-23.0908&lon=-47.2180").get_json()
+    fontes = [c["fonte"] for c in lista]
+    assert fontes == sorted(fontes, key=lambda f: f != "equipe") and "osm" in fontes
+    vet_prado = next(c for c in lista if c["nome"] == "Hospital Veterinário Vet Prado")
+    assert vet_prado["horario_texto"] == "24h" and "emergencia" in vet_prado["especialidades"]
 
 
 def test_overpass_usa_o_servidor_que_responder(monkeypatch):
@@ -295,7 +368,8 @@ def test_pedido_valida_entrada(cliente, banco_temp):
     assert cliente.get("/api/tutores/1/historico").get_json()["total_compras_janela"] == antes
 
 
-def test_clinica_criada_aparece_nas_clinicas_demo(cliente, banco_temp):
+def test_clinica_cadastrada_nao_entra_na_lista_dos_tutores(cliente, banco_temp, overpass_falso):
+    """Só clínicas do OpenStreetMap aparecem: a conta de clínica serve ao painel, não à lista."""
     cliente.post("/api/cadastro", json=CLINICA_NOVA)
-    nomes = [c["nome"] for c in cliente.get("/api/clinicas?especialidade=nutricao").get_json()]
-    assert "Clínica Teste" in nomes
+    nomes = [c["nome"] for c in cliente.get("/api/clinicas?lat=-22.9056&lon=-47.0608").get_json()]
+    assert "Clínica Teste" not in nomes and all(n for n in nomes)

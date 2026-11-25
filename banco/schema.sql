@@ -132,3 +132,31 @@ CREATE TABLE cache_externo (
   conteudo  TEXT NOT NULL,     -- JSON
   criado_em TEXT NOT NULL      -- ISO datetime
 );
+
+-- Recomendações feitas pela IA, SEM identificar o tutor (não há tutor_id de propósito).
+-- Alimentam a "demanda da região" no painel das clínicas.
+CREATE TABLE recomendacoes (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  data          TEXT NOT NULL,   -- ISO "YYYY-MM-DD"
+  especialidade TEXT NOT NULL,
+  situacao      TEXT NOT NULL,
+  especie       TEXT NOT NULL
+);
+
+-- CRM da clínica: pedido de contato de um tutor para uma clínica parceira (com conta no PatasPerto).
+-- Só existe com o consentimento do tutor (consentimento_em). A clínica recebe nome, contato e
+-- espécie/raça/idade do pet — nunca CPF nem observações de saúde.
+CREATE TABLE leads (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  clinica_id        INTEGER NOT NULL REFERENCES clinicas(id),
+  tutor_id          INTEGER NOT NULL REFERENCES tutores(id),
+  motivo            TEXT NOT NULL,
+  mensagem          TEXT NOT NULL DEFAULT '',
+  contato_preferido TEXT NOT NULL CHECK (contato_preferido IN ('telefone', 'whatsapp', 'email')),
+  status            TEXT NOT NULL DEFAULT 'novo'
+                    CHECK (status IN ('novo', 'em_contato', 'agendado', 'atendido', 'perdido')),
+  nota              TEXT NOT NULL DEFAULT '',   -- anotação interna da clínica
+  consentimento_em  TEXT NOT NULL,              -- ISO datetime em que o tutor autorizou
+  criado_em         TEXT NOT NULL,
+  atualizado_em     TEXT NOT NULL
+);

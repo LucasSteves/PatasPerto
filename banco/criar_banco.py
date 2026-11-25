@@ -232,6 +232,38 @@ def popular_clientes(con, hoje):
                         (tid, oid, (hoje - timedelta(days=rng.randint(0, 179))).isoformat(), qtd, round(preco * qtd, 2)))
 
 
+# ---- CRM de demonstração: recomendações anônimas da IA e pedidos de contato para a Clínica VidaPet (id 1)
+DEMANDA_DEMO = [   # (situação relatada, especialidade que a IA indicou, peso)
+    ("checkup", "clinico_geral", 30), ("coceira", "dermatologia", 22), ("mau_halito", "odontologia", 12),
+    ("mancando", "ortopedia", 10), ("ganho_peso", "nutricao", 8), ("vomito", "clinico_geral", 8),
+    ("convulsao", "emergencia", 4), ("toxico", "emergencia", 3), ("engasgo", "emergencia", 3),
+]
+LEADS_DEMO = [     # (tutor_id, motivo, mensagem, contato, etapa, nota da clínica, dias atrás)
+    (2, "Coceira, pele irritada", "Ela se coça muito à noite, já trocamos a ração.", "whatsapp", "novo", "", 0),
+    (3, "Consulta de rotina / check-up", "", "telefone", "novo", "", 1),
+    (4, "Mau hálito, tártaro", "Queria orçamento de limpeza de tártaro.", "email", "em_contato", "Enviado orçamento por e-mail.", 3),
+    (5, "Mancando, dificuldade para andar", "Começou depois de um pulo do sofá.", "telefone", "agendado", "Consulta quinta 10h com Dra. Marina.", 5),
+    (6, "Consulta de rotina / check-up", "Vacinas atrasadas.", "whatsapp", "atendido", "V10 aplicada; retorno em 30 dias.", 12),
+    (7, "Ganho de peso", "", "telefone", "perdido", "Não atendeu 3 ligações.", 20),
+]
+
+
+def popular_crm(con, hoje):
+    rng = random.Random(7)
+    pesos = [d[2] for d in DEMANDA_DEMO]
+    for _ in range(320):   # ~6 meses de recomendações, crescendo um pouco nos meses recentes
+        situacao, especialidade, _p = rng.choices(DEMANDA_DEMO, weights=pesos)[0]
+        dias = int(180 * rng.random() ** 1.3)
+        especie = rng.choice(["cao", "cao", "gato"])
+        con.execute("INSERT INTO recomendacoes (data, especialidade, situacao, especie) VALUES (?,?,?,?)",
+                    ((hoje - timedelta(days=dias)).isoformat(), especialidade, situacao, especie))
+    for tutor_id, motivo, msg, contato, status, nota, dias in LEADS_DEMO:
+        quando = (datetime.now() - timedelta(days=dias, hours=rng.randint(1, 9))).isoformat(timespec="seconds")
+        con.execute("""INSERT INTO leads (clinica_id, tutor_id, motivo, mensagem, contato_preferido, status, nota,
+                       consentimento_em, criado_em, atualizado_em) VALUES (1,?,?,?,?,?,?,?,?,?)""",
+                    (tutor_id, motivo, msg, contato, status, nota, quando, quando, quando))
+
+
 def criar():
     if os.path.exists(CAMINHO_DB):
         os.remove(CAMINHO_DB)
@@ -271,11 +303,12 @@ def criar():
     for tipo, email, senha, tutor_id, clinica_id in CONTAS_DEMO:
         con.execute("INSERT INTO contas (tipo, email, senha_hash, tutor_id, clinica_id, criado_em) VALUES (?,?,?,?,?,?)",
                     (tipo, email, generate_password_hash(senha), tutor_id, clinica_id, agora))
+    popular_crm(con, hoje)
 
     con.commit()
     # nome de tabela não aceita parâmetro (?) no SQL; aqui vem só desta lista fixa, nunca do usuário
     resumo = {t: con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # nosemgrep: formatted-sql-query, sqlalchemy-execute-raw-query
-              for t in ["lojas", "produtos", "ofertas", "clinicas", "tutores", "pets", "compras", "contas"]}
+              for t in ["lojas", "produtos", "ofertas", "clinicas", "tutores", "pets", "compras", "contas", "recomendacoes", "leads"]}
     con.close()
     print(f"Banco criado em {CAMINHO_DB}")
     for t, n in resumo.items():

@@ -16,6 +16,13 @@ def test_arquivos_sensiveis_nao_sao_servidos(cliente, caminho):
     assert b"secret" not in r.data and b"SQLite" not in r.data and b"import" not in r.data
 
 
+def test_pagina_404_com_a_marca(cliente):
+    r = cliente.get("/pagina-que-nao-existe")
+    assert r.status_code == 404 and "text/html" in r.content_type
+    assert "PatasPerto" in r.get_data(as_text=True) and "Voltar" in r.get_data(as_text=True)
+    assert cliente.get("/api/nao-existe").is_json                       # a API continua respondendo JSON
+
+
 # ---- 3: a chave da sessão não está no código
 def test_chave_da_sessao_nao_e_a_padrao_antiga():
     from app import app
@@ -111,7 +118,8 @@ def test_limite_de_tentativas_no_login(cliente):
     for _ in range(5):
         assert cliente.post("/api/login", json=errado).status_code == 401
     r = cliente.post("/api/login", json=errado)
-    assert r.status_code == 429 and r.headers["Retry-After"]
+    assert r.status_code == 429 and 0 < int(r.headers["Retry-After"]) <= 60
+    assert "1 minuto" in r.get_json()["erro"]                         # diz quanto falta
     # bloqueado, nem a senha certa entra até a janela passar
     assert cliente.post("/api/login", json=errado | {"senha": "demo123"}).status_code == 429
 

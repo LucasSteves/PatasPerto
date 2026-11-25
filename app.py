@@ -74,6 +74,7 @@ def cabecalhos_de_seguranca(resp):
     resp.headers["X-Frame-Options"] = "DENY"                     # ninguém embute o site num iframe (clickjacking)
     resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     resp.headers["Permissions-Policy"] = "geolocation=(self), camera=(), microphone=(), payment=()"
+    resp.headers["X-Robots-Tag"] = "noindex, nofollow"               # fora do Google: só abre quem tem o link
     if request.path.startswith("/api/"):
         resp.headers["Cache-Control"] = "no-store"               # dados de conta não ficam em cache
     # CORS: de propósito, nenhum Access-Control-Allow-Origin. Front-end e API têm a mesma origem,
@@ -89,6 +90,8 @@ def erro_sem_detalhe(e):
     """Erros da API saem em JSON, sem traceback nem nome de arquivo (o detalhe fica só no log do servidor)."""
     codigo = getattr(e, "code", 500) or 500
     if not request.path.startswith("/api/"):
+        if codigo == 404:   # endereço errado: página com a marca, em vez do "Not Found" do Flask
+            return send_from_directory(app.static_folder, "404.html"), 404
         return e if codigo != 500 else ("Erro interno.", 500)
     mensagens = {404: "rota não encontrada", 405: "método não permitido", 413: "requisição grande demais"}
     if codigo == 500:
@@ -114,9 +117,12 @@ def registrar_tentativa(acao):
     _tentativas[(acao, request.remote_addr)].append(time.monotonic())
 
 
-def _muitas_tentativas(janela_s):
-    resp = jsonify({"erro": "muitas tentativas. Espere alguns minutos e tente de novo."})
-    resp.headers["Retry-After"] = str(janela_s)
+def _muitas_tentativas(acao, janela_s):
+    """429 dizendo quanto falta: o bloqueio acaba quando a tentativa mais antiga sai da janela."""
+    falta_s = math.ceil(janela_s - (time.monotonic() - _tentativas[(acao, request.remote_addr)][0]))
+    minutos = max(1, math.ceil(falta_s / 60))
+    resp = jsonify({"erro": f"Muitas tentativas. Tente de novo em {minutos} minuto{'s' if minutos > 1 else ''}."})
+    resp.headers["Retry-After"] = str(max(1, falta_s))
     return resp, 429
 
 ESPECIES = {"cao", "gato"}
@@ -146,68 +152,72 @@ def _posicao(fonte):
     if not (math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180):
         return None
     try:
-        raio = min(max(float(fonte.get("raio_km") or 5), 0.5), 30)
+        raio = min(max(float(fonte.get("raio_km") or 5), 0.5), clinicas_osm.RAIO_BUSCA_KM)
     except (TypeError, ValueError):
         raio = 5.0
     return {"lat": lat, "lon": lon, "raio_km": raio}
 
 
-def _clinicas_demo(hora=None):
-    """Clínicas fictícias da tabela clinicas, no mesmo formato das clínicas reais do OpenStreetMap."""
-    lista = consultas.listar_clinicas()
-    for c in lista:
-        c.update(fonte="demo", horario_conhecido=True, especialidade_inferida=False, site="", osm_url="",
-                 horario_texto="24h" if c["aberto_24h"] else f'{c["abre"]}–{c["fecha"]}')
-        if hora:
-            c["aberta_agora"] = consultas.clinica_aberta(c, hora)
-    return lista
-
-
-def clinicas_para(pos, especialidade=None, hora=None, so_abertas=False, tolerante=False):
+def clinicas_para(pos, especialidade=None, hora=None, so_abertas=False, tolerante=False, publico=None):
     """
-    Duas fontes, mesmo formato:
-      - pos informado  → clínicas REAIS do OpenStreetMap ao redor de lat/lon (banco/clinicas_osm.py)
-      - sem pos        → clínicas fictícias de demonstração (tabela clinicas)
+    Só clínicas REAIS ao redor de lat/lon, de duas fontes (banco/clinicas_osm.py):
+      - as pesquisadas pela equipe (banco/clinicas_pesquisadas.json), que vêm primeiro na lista;
+      - as do OpenStreetMap.
+    Sem posição, ou sem nenhuma das duas fontes, a lista vem vazia e `meta.aviso` diz o motivo:
+    nunca mostramos clínicas fictícias no lugar.
     Retorna (lista, meta). `tolerante=True` relaxa o filtro de especialidade quando ele zera a lista.
+    `publico`: "silvestres" (busca no raio máximo, porque são raras) ou "domesticos" (cães e gatos).
     """
-    meta = {"fonte": "demo", "aviso": None}
-    if pos:
-        try:
-            lista = clinicas_osm.buscar_clinicas(pos["lat"], pos["lon"], pos["raio_km"])
-            meta.update(fonte="osm", raio_km=pos["raio_km"], total_no_raio=len(lista))
-            if hora:
-                clinicas_osm.anotar_abertas(lista, hora)
-        except Exception as e:  # sem internet / Overpass fora → cai para demonstração
-            app.logger.warning("OpenStreetMap indisponível: %r", e)
-            lista = _clinicas_demo(hora)   # no MESMO formato das do OSM (antes faltava horario_texto → erro 500)
-            for c in lista:                # distância até a posição do usuário, não até o tutor fictício
-                c["distancia_km"] = round(clinicas_osm.haversine_km(pos["lat"], pos["lon"], c["lat"], c["lon"]), 2)
-            meta["aviso"] = ("O OpenStreetMap não respondeu agora; mostrando clínicas de demonstração "
-                             "(fictícias, em Sumaré-SP). Tente de novo em alguns minutos.")
-    else:
-        lista = _clinicas_demo(hora)
-    if meta["fonte"] == "osm" and not lista:
-        meta["aviso"] = "Nenhuma clínica veterinária mapeada no OpenStreetMap nesse raio. Aumente o raio."
+    if pos and publico == "silvestres":
+        pos = pos | {"raio_km": clinicas_osm.RAIO_BUSCA_KM}
+    if not pos:
+        return [], {"fonte": "sem_posicao",
+                    "aviso": "Defina sua localização (GPS ou cidade) para ver as clínicas reais perto de você."}
+    meta = {"fonte": "osm", "aviso": None, "raio_km": pos["raio_km"]}
+    equipe = clinicas_osm.clinicas_pesquisadas(pos["lat"], pos["lon"], pos["raio_km"])
+    try:
+        lista = clinicas_osm.buscar_clinicas(pos["lat"], pos["lon"], pos["raio_km"])
+    except Exception as e:  # sem internet / Overpass fora e nada guardado no cache
+        app.logger.warning("OpenStreetMap indisponível: %r", e)
+        if not equipe:
+            return [], {"fonte": "indisponivel", "raio_km": pos["raio_km"],
+                        "aviso": "O OpenStreetMap não respondeu agora e ainda não há clínicas guardadas para esta região. "
+                                 "Tente de novo em alguns minutos."}
+        lista, meta = [], {"fonte": "equipe", "raio_km": pos["raio_km"],
+                           "aviso": "O OpenStreetMap não respondeu agora: mostrando só as clínicas pesquisadas pela equipe."}
+    pesquisadas = {clinicas_osm._normalizar(c["nome"]) for c in equipe}   # a mesma clínica nas duas fontes: fica a da equipe
+    lista = equipe + [c for c in lista if clinicas_osm._normalizar(c["nome"]) not in pesquisadas]
+    if hora:
+        clinicas_osm.anotar_abertas(lista, hora)
+    if publico:   # no OSM, inferido pelo nome; nas pesquisadas, informado pela equipe
+        lista = [c for c in lista if c["atende_silvestres" if publico == "silvestres" else "atende_domesticos"]]
+    meta["total_no_raio"] = len(lista)
+    if not lista:
+        meta["aviso"] = meta["aviso"] or "Nenhuma clínica veterinária encontrada nesse raio. Aumente o raio."
     if especialidade:
         filtrada = [c for c in lista if especialidade in c["especialidades"]]
         if not filtrada and tolerante and lista:
             meta["aviso"] = (meta["aviso"] or "") + f" Nenhuma clínica próxima indica '{especialidade}' no nome; mostrando todas as clínicas próximas — confirme a especialidade por telefone."
             meta["aviso"] = meta["aviso"].strip()
         else:
+            if not filtrada and lista:   # o filtro zerou: o motivo é a falta do dado, não o horário
+                meta["aviso"] = (f"Nenhuma das {len(lista)} clínicas próximas indica '{especialidade}' no nome: "
+                                 "o OpenStreetMap não informa especialidades. Escolha 'Todas' para ver as clínicas "
+                                 "e confirme a especialidade por telefone.")
             lista = filtrada
     if hora and so_abertas:
         # aberta_agora None = horário desconhecido: mantemos na lista, sinalizado no app
         lista = [c for c in lista if c.get("aberta_agora") is not False]
-    lista.sort(key=lambda c: c["distancia_km"])
+    lista.sort(key=lambda c: (c["fonte"] != "equipe", c["distancia_km"]))   # pesquisadas pela equipe primeiro
     return lista, meta
 
 
 @app.get("/api/clinicas")
 def api_clinicas():
     """
-    Sem lat/lon: clínicas de demonstração (compatível com a versão anterior: `hora` filtra).
-    Com lat/lon (+ raio_km): clínicas reais do OpenStreetMap. `hora` anota aberta_agora;
-    `so_abertas=1` filtra. `meta=1` devolve {"clinicas": [...], "meta": {...}}.
+    Clínicas reais do OpenStreetMap ao redor de lat/lon (+ raio_km). Sem lat/lon: lista vazia e o aviso
+    pedindo a localização. `hora` anota aberta_agora; `so_abertas=1` filtra.
+    `meta=1` devolve {"clinicas": [...], "meta": {...}}.
     """
     especialidade = request.args.get("especialidade") or None
     hora = request.args.get("hora") or None
@@ -215,9 +225,12 @@ def api_clinicas():
         return jsonify({"erro": "especialidade inválida"}), 400
     if hora and not RE_HORA.match(hora):
         return jsonify({"erro": "hora deve estar no formato HH:MM"}), 400
+    publico = request.args.get("publico") or None
+    if publico not in (None, "silvestres", "domesticos"):
+        return jsonify({"erro": "publico deve ser silvestres ou domesticos"}), 400
     pos = _posicao(request.args)
-    so_abertas = request.args.get("so_abertas") == "1" or (pos is None and hora is not None)
-    lista, meta = clinicas_para(pos, especialidade, hora, so_abertas)
+    so_abertas = request.args.get("so_abertas") == "1"
+    lista, meta = clinicas_para(pos, especialidade, hora, so_abertas, publico=publico)
     if request.args.get("meta") == "1":
         return jsonify({"clinicas": lista, "meta": meta})
     return jsonify(lista)
@@ -465,7 +478,7 @@ def _abrir_sessao(conta_id):
 def api_cadastro():
     """Cria conta cliente (+ tutor + pet) ou conta clínica (+ clínica) e já abre a sessão."""
     if limite_excedido("cadastro", MAX_CADASTROS, JANELA_CADASTRO_S):
-        return _muitas_tentativas(JANELA_CADASTRO_S)
+        return _muitas_tentativas("cadastro", JANELA_CADASTRO_S)
     registrar_tentativa("cadastro")
     corpo = request.get_json(silent=True) or {}
     tipo = corpo.get("tipo")
@@ -497,7 +510,7 @@ def api_cadastro():
     return jsonify({"conta": _abrir_sessao(conta_id)}), 201
 
 
-JANELA_LOGIN_S, MAX_LOGIN_ERRADO = 300, 5    # 5 senhas erradas em 5 minutos por IP
+JANELA_LOGIN_S, MAX_LOGIN_ERRADO = 60, 5     # 5 senhas erradas em 1 minuto por IP (demo; num site real, 5 min)
 JANELA_CADASTRO_S, MAX_CADASTROS = 3600, 10   # 10 tentativas de cadastro por hora por IP
 HASH_FALSO = generate_password_hash(secrets.token_hex(8))
 
@@ -505,7 +518,7 @@ HASH_FALSO = generate_password_hash(secrets.token_hex(8))
 @app.post("/api/login")
 def api_login():
     if limite_excedido("login", MAX_LOGIN_ERRADO, JANELA_LOGIN_S):
-        return _muitas_tentativas(JANELA_LOGIN_S)
+        return _muitas_tentativas("login", JANELA_LOGIN_S)
     corpo = request.get_json(silent=True) or {}
     conta = consultas.obter_conta(email=str(corpo.get("email") or "").strip().lower()[:120])
     # sem conta, compara com um hash falso: o tempo de resposta não revela quais e-mails existem
@@ -550,8 +563,81 @@ def api_painel_clinica():
     Só totais agregados de clientes fictícios: nenhum CPF, nome ou dado de saúde individual.
     """
     periodo = "semana" if request.args.get("periodo") == "semana" else "mes"
-    return jsonify(consultas.painel_clinica(periodo) | {
-        "clinica": consultas.obter_clinica(conta_atual()["clinica_id"])})
+    try:
+        dias = int(request.args.get("dias", consultas.JANELA_PAINEL_DIAS))
+    except ValueError:
+        dias = 0
+    if dias not in (30, 90, 180):
+        return jsonify({"erro": "dias deve ser 30, 90 ou 180"}), 400
+    clinica_id = conta_atual()["clinica_id"]
+    return jsonify(consultas.painel_clinica(periodo, dias, clinica_id) | {"clinica": consultas.obter_clinica(clinica_id)})
+
+
+# ------------------------------------------------------------ [banco] CRM: pedidos de contato
+CONTATOS = {"telefone", "whatsapp", "email"}
+
+
+def _parceira_publica(c):
+    """O que o tutor vê de uma clínica parceira (cadastrada no PatasPerto)."""
+    return {"id": c["id"], "nome": c["nome"], "endereco": c["endereco"], "telefone": c["telefone"],
+            "especialidades": c["especialidades"],
+            "horario_texto": "24h" if c["aberto_24h"] else f'{c["abre"]}–{c["fecha"]}'}
+
+
+@app.get("/api/parceiras")
+def api_parceiras():
+    return jsonify([_parceira_publica(c) for c in consultas.listar_parceiras()])
+
+
+@app.post("/api/leads")
+@exige_conta("cliente")
+def api_criar_lead():
+    """Tutor pede para ser contatado por uma clínica parceira. Sem o consentimento marcado, nada é enviado."""
+    if limite_excedido("lead", 10, 3600):
+        return _muitas_tentativas("lead", 3600)
+    registrar_tentativa("lead")
+    corpo = request.get_json(silent=True) or {}
+    if corpo.get("consentimento") is not True:
+        return jsonify({"erro": "é preciso autorizar o envio dos seus dados para a clínica"}), 400
+    if corpo.get("contato") not in CONTATOS:
+        return jsonify({"erro": "escolha telefone, WhatsApp ou e-mail para o contato"}), 400
+    try:
+        clinica_id = int(corpo.get("clinica_id"))
+        motivo = _texto(corpo, "motivo", "o motivo", maximo=120)
+        mensagem = _texto(corpo, "mensagem", "a mensagem", obrigatorio=False, maximo=1000)
+    except (TypeError, ValueError) as e:
+        return jsonify({"erro": str(e) if isinstance(e, ErroCadastro) else "clínica inválida"}), 400
+    try:
+        lead_id = consultas.criar_lead(clinica_id, conta_atual()["tutor_id"], motivo, mensagem, corpo["contato"])
+    except LookupError:
+        return jsonify({"erro": "clínica parceira não encontrada"}), 404
+    except consultas.PedidoJaAberto:
+        return jsonify({"erro": "você já tem um pedido em andamento com esta clínica"}), 409
+    return jsonify({"id": lead_id}), 201
+
+
+@app.get("/api/clinica/leads")
+@exige_conta("clinica")
+def api_leads_clinica():
+    return jsonify({"leads": consultas.listar_leads(conta_atual()["clinica_id"]), "etapas": consultas.STATUS_LEAD})
+
+
+@app.patch("/api/clinica/leads/<int:lead_id>")
+@exige_conta("clinica")
+def api_atualizar_lead(lead_id):
+    """Move o pedido no funil (status) e/ou grava a anotação interna (nota). Só os pedidos desta clínica."""
+    corpo = request.get_json(silent=True) or {}
+    status = corpo.get("status")
+    if status is not None and status not in consultas.STATUS_LEAD:
+        return jsonify({"erro": "etapa inválida"}), 400
+    try:
+        nota = _texto(corpo, "nota", "a anotação", obrigatorio=False, maximo=1000) if "nota" in corpo else None
+    except ErroCadastro as e:
+        return jsonify({"erro": str(e)}), 400
+    lead = consultas.atualizar_lead(conta_atual()["clinica_id"], lead_id, status, nota)
+    if lead is None:
+        return jsonify({"erro": "pedido não encontrado"}), 404
+    return jsonify(lead)
 
 
 # ------------------------------------------------------------ [IA] modelo
@@ -596,6 +682,7 @@ def api_recomendar():
     features = {"especie": especie, "idade_anos": idade, "porte": porte, "situacao": situacao,
                 **historico["features"]}
     ia = recomendador.prever(features)
+    consultas.registrar_recomendacao(ia["especialidade"], situacao, especie)   # anônimo: alimenta a demanda da região
     pos = _posicao(corpo)
     clinicas, meta = clinicas_para(pos, ia["especialidade"], hora, so_abertas=True, tolerante=True)
     return jsonify({
@@ -604,8 +691,7 @@ def api_recomendar():
                                           "janela_dias": historico["janela_dias"]}},
         "banco": {"hora_consultada": hora, "especialidade_filtrada": ia["especialidade"],
                   "clinicas": clinicas[:12], **meta,
-                  "origem": "clínicas reais do OpenStreetMap (banco/clinicas_osm.py), especialidade inferida pelo nome"
-                            if meta["fonte"] == "osm" else "consulta SQL em banco/consultas.py (dados de demonstração)"},
+                  "origem": "clínicas reais do OpenStreetMap (banco/clinicas_osm.py), especialidade inferida pelo nome"},
     })
 
 

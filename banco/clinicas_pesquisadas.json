@@ -1,0 +1,86 @@
+{
+  "_leia_me": [
+    "Clínicas REAIS pesquisadas pela equipe para cobrir o que falta no OpenStreetMap (principalmente quem atende silvestres e exóticos).",
+    "Elas aparecem junto com as do OpenStreetMap, primeiro na lista e com o selo 'pesquisada pela equipe'.",
+    "Dados tirados da fonte indicada em 'fonte_url' na data 'pesquisado_em'. Ligue para confirmar e preencha 'verificado_por_telefone_em' (AAAA-MM-DD).",
+    "opening_hours segue o formato do OpenStreetMap (ex.: 'Mo-Fr 08:00-18:00; Sa 08:00-12:00; Su off' ou '24/7'); vazio = não informado.",
+    "lat/lon vieram do Nominatim pelo nome da rua: 'coordenada' diz se é aproximada."
+  ],
+  "clinicas": [
+    {
+      "nome": "Villa Zoo Clínica Veterinária",
+      "endereco": "R. Treze de Maio, 1182 · Centro, Indaiatuba",
+      "telefone": "(19) 97115-6252",
+      "site": "https://villazoo.com.br/",
+      "opening_hours": "Mo-Fr 08:00-18:00; Sa 08:00-12:00; Su off",
+      "atende_domesticos": true,
+      "atende_silvestres": true,
+      "fonte_url": "https://villazoo.com.br/",
+      "pesquisado_em": "2026-11-25",
+      "verificado_por_telefone_em": null,
+      "lat": -23.0737333,
+      "lon": -47.2049193,
+      "coordenada": "aproximada (rua)"
+    },
+    {
+      "nome": "Clínica Veterinária Indavet",
+      "endereco": "Rua Tuiuti · Jardim Rossignatti, Indaiatuba",
+      "telefone": "(19) 3875-2064",
+      "site": "",
+      "opening_hours": "Mo-Fr 09:00-18:00; Sa,Su off",
+      "atende_domesticos": true,
+      "atende_silvestres": true,
+      "fonte_url": "https://www.veterinarios.biz/sobre/clinica-veterinaria-indavet",
+      "pesquisado_em": "2026-11-25",
+      "verificado_por_telefone_em": null,
+      "lat": -23.090308,
+      "lon": -47.2117303,
+      "coordenada": "aproximada (rua, sem número)"
+    },
+    {
+      "nome": "Bicos & Focinhos Clínica Veterinária",
+      "endereco": "Av. Maj. Alfredo Camargo Fonseca, 309 · Cidade Nova I, Indaiatuba",
+      "telefone": "(19) 99113-5773",
+      "site": "",
+      "opening_hours": "",
+      "atende_domesticos": true,
+      "atende_silvestres": true,
+      "fonte_url": "https://www.sitedacidade.com.br/atendimento-veterinario-de-animais-silvestres-e-exoticos-em-indaiatuba-sp",
+      "pesquisado_em": "2026-11-25",
+      "verificado_por_telefone_em": null,
+      "lat": -23.0853886,
+      "lon": -47.2059326,
+      "coordenada": "aproximada (rua)"
+    },
+    {
+      "nome": "Hospital-Escola Veterinário UniMAX",
+      "endereco": "Rod. João Ceccon, km 4 · Altos do Bela Vista, Indaiatuba (Campus II)",
+      "telefone": "(19) 3885-9902",
+      "site": "https://unimax.edu.br/voce-na-unimax/hospital-veterinario/",
+      "opening_hours": "",
+      "atende_domesticos": true,
+      "atende_silvestres": true,
+      "fonte_url": "https://unimax.edu.br/atendimento/",
+      "pesquisado_em": "2026-11-25",
+      "verificado_por_telefone_em": null,
+      "lat": -23.0725478,
+      "lon": -47.238305,
+      "coordenada": "aproximada (meio da rodovia; o km 4 não foi localizado)"
+    },
+    {
+      "nome": "Hospital Veterinário Vet Prado",
+      "endereco": "Av. Eng. Fábio Roberto Barnabé, 2564 · Jardim Esplanada, Indaiatuba",
+      "telefone": "(19) 3835-4337",
+      "site": "https://vetprado.com.br/",
+      "opening_hours": "24/7",
+      "atende_domesticos": true,
+      "atende_silvestres": false,
+      "fonte_url": "https://www.sitedacidade.com.br/atendimento-veterinario-de-animais-silvestres-e-exoticos-em-indaiatuba-sp",
+      "pesquisado_em": "2026-11-25",
+      "verificado_por_telefone_em": null,
+      "lat": -23.1274186,
+      "lon": -47.2336051,
+      "coordenada": "aproximada (rua)"
+    }
+  ]
+}

@@ -105,6 +105,7 @@ const ICONES = {
   gota: '<path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z"/>',
   vento: '<path d="M3 8h11a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7"/>',
   raio: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  passaro: '<path d="M16 7h.01M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20M20 7l2 .5-2 .5M10 18v3M14 17.75V21M7 18a6 6 0 0 0 3.84-10.61"/>',
   termometro: '<path d="M14 14.8V4a2 2 0 0 0-4 0v10.8a4 4 0 1 0 4 0z"/>',
 };
 const ic = nome => '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">' + (ICONES[nome] || "") + '</svg>';
@@ -285,7 +286,7 @@ function atualizarConta() {
   $("contaNome").textContent = conta && conta.tipo === "clinica" ? conta.clinica.nome
     : (conta || salvo) ? (lerPerfil().nome.split(" ")[0] || "Perfil") : "Perfil";   // sem conta: não fingir ser a tutora demo
   $("btSair").textContent = conta ? "Sair" : "Entrar";
-  $("subtitulo").textContent = modo === "clinica" ? "Painel da clínica · indicadores agregados dos clientes"
+  $("subtitulo").textContent = modo === "clinica" ? "Painel da clínica · contatos e mercado"
     : "Produtos para o seu pet nas lojas mais perto de você";
 }
 
@@ -378,8 +379,10 @@ async function pedirRecomendacao() {
   await posicaoTutor().catch(() => {});
   try {
     const r = await api("/api/recomendar", { method: "POST", body: JSON.stringify(corpo) });
-    res.innerHTML = htmlIA(r.ia, corpo) + htmlClinicas(r.banco) + htmlRodapeModelo();
-    if (r.banco.clinicas.length) montarMapa($("mapaRec"), r.banco.clinicas, { compacto: true });
+    // parceiras logo abaixo da tabela da IA (mesma coluna no computador); as clínicas ficam ao lado
+    res.innerHTML = '<div class="col-ia">' + htmlIA(r.ia, corpo) + '<div class="bloco" id="parceirasRec" hidden></div></div>' + htmlClinicas(r.banco) + htmlRodapeModelo();
+    renderParceiras($("parceirasRec"), { especialidade: r.ia.especialidade, motivo: NOME_SIT[corpo.situacao] });
+    if (r.banco.clinicas.length && montarMapa($("mapaRec"), r.banco.clinicas, { compacto: true })) ligarListaAoMapa(res, $("mapaRec"));
   } catch (e) {
     res.innerHTML = '<div class="aviso-erro">' + (e.message.startsWith("HTTP") || e.message.includes("fetch") ? MSG_SEM_API : esc(e.message)) + '</div>';
   }
@@ -400,16 +403,13 @@ function htmlIA(ia, corpo) {
 }
 
 function htmlClinicas(b) {
-  const lista = b.clinicas.length ? b.clinicas.map(c =>
-    '<div class="clinica"><div class="cl-info"><span class="cl-nome">' + esc(c.nome) + '</span>' +
-    '<small>' + ic("mapa") + ' ' + esc(c.endereco) + ' — ' + num1(c.distancia_km) + ' km</small><small>' + (c.telefone ? ic("telefone") + ' ' + esc(c.telefone) + ' · ' : '') + ic("relogio") + ' ' + esc(txtHorario(c)) + '</small></div>' +
-    (c.aberta_agora === true ? '<span class="tag24">' + (c.aberto_24h ? '24h' : 'aberta') + '</span>' : '<span class="tagoff">horário ?</span>') + '</div>').join("") :
-    '<p class="vazio-clin">Nenhuma clínica encontrada para esse filtro às ' + b.hora_consultada + '. Tente outro horário, aumente o raio na aba Mapa ou veja as clínicas de emergência.</p>';
-  const fonte = b.fonte === "osm" ? '<span class="rot-ok">dados reais · OpenStreetMap</span>' : '<span class="rot-demo">dados de demonstração</span>';
+  const lista = b.clinicas.length ? b.clinicas.map(c => itemClinica(c)).join("") :
+    (b.fonte !== "osm" ? '' : '<p class="vazio-clin">Nenhuma clínica encontrada para esse filtro às ' + b.hora_consultada + '. Tente outro horário, aumente o raio na aba Mapa ou veja as clínicas de emergência.</p>');
+  const fonte = b.fonte === "osm" ? '<span class="rot-ok">dados reais · OpenStreetMap</span>' : '';
   return '<div class="bloco"><h3>Clínicas abertas às ' + b.hora_consultada + ' <span class="rot-db">consulta a dados</span> ' + fonte + '</h3>' +
     '<p class="origem">filtro: especialidade = ' + esc(b.especialidade_filtrada) + ' e horário de funcionamento · ' + esc(b.origem) + '</p>' +
     (b.aviso ? '<div class="aviso" style="margin-bottom:10px">' + esc(b.aviso) + '</div>' : '') +
-    (!temPosicaoReal() ? '<p class="explica" style="margin:0 0 10px">Para ver clínicas reais perto de você, defina sua localização na aba <b>' + ic("mapa") + ' Mapa</b>.</p>' : '') +
+    (!temPosicaoReal() ? '<p class="explica" style="margin:0 0 10px">Defina sua localização na aba <b>' + ic("mapa") + ' Mapa</b> (GPS ou cidade) e peça a recomendação de novo.</p>' : '') +
     (b.clinicas.length ? '<div id="mapaRec" class="mapa compacto"></div><p class="explica" style="margin-top:6px">' + ic("mapa") + ' Toque em uma clínica no mapa para ver telefone, horário e a rota.</p>' : '') + lista + '</div>';
 }
 
@@ -420,7 +420,6 @@ function htmlRodapeModelo() {
 }
 
 /* ================= EMERGÊNCIA (primeiros socorros + clínicas) ================= */
-const vetFamilia = { nome: "Dra. Marina Alves", clinica: "Clínica VidaPet", telefone: "(19) 99999-0001", distanciaKm: 0.6 };
 const primeirosSocorros = [
   { id: "engasgo", icone: "vento", titulo: "Engasgo",
     passos: ["Mantenha a calma e contenha o animal com cuidado para não se machucar.", "Abra a boca e verifique se o objeto está visível; retire apenas se conseguir alcançá-lo sem empurrar.", "Em cães pequenos, segure-o de cabeça para baixo por instantes; em cães grandes, eleve as patas traseiras.", "Se não resolver em segundos, leve imediatamente ao veterinário."],
@@ -437,11 +436,18 @@ const primeirosSocorros = [
     alerta: "Água muito gelada pode causar choque térmico; use água natural." },
 ];
 const tEmg = telas.emergencia;
+const RAIO_SILVESTRES_KM = 30;   // = RAIO_BUSCA_KM em banco/clinicas_osm.py
+const TIPOS_ANIMAL = {
+  domesticos: { icone: "pata", titulo: "Cão ou gato", sub: "Clínicas de pequenos animais" },
+  silvestres: { icone: "passaro", titulo: "Animal silvestre ou exótico", sub: "Aves, répteis, roedores exóticos, fauna" },
+};
+const btVoltarEmg = '<button class="voltar" id="btVoltarEmg">' + ic("voltar") + ' Voltar</button>';
+const telLink = t => { const n = t.replace(/[^\d+]/g, ""); return "tel:" + (n.startsWith("+") ? n : "+55" + n); };   // com DDI: funciona em qualquer celular
 
 function wireEmg() {
   const bv = $("btVoltarEmg"); if (bv) bv.addEventListener("click", renderEmergenciaHome);
-  tEmg.querySelectorAll("[data-clinicas]").forEach(b => b.addEventListener("click", renderClinicasEmergencia));
-  tEmg.querySelectorAll("[data-sos]").forEach(b => b.addEventListener("click", renderSOS));
+  tEmg.querySelectorAll("[data-clinicas]").forEach(b => b.addEventListener("click", () => escolherTipoAnimal("clinicas")));
+  tEmg.querySelectorAll("[data-sos]").forEach(b => b.addEventListener("click", () => escolherTipoAnimal("sos")));
   tEmg.querySelectorAll("[data-rec]").forEach(b => b.addEventListener("click", () => { mostrar("recomendacao"); renderRecomendacao(b.dataset.rec); }));
 }
 
@@ -459,7 +465,7 @@ function renderEmergenciaHome() {
 function renderSituacao(id) {
   const s = primeirosSocorros.find(x => x.id === id);
   tEmg.innerHTML =
-    '<button class="voltar" id="btVoltarEmg">' + ic("voltar") + ' Voltar</button><h2 class="det-titulo">' + ic(s.icone) + ' ' + s.titulo + '</h2>' +
+    btVoltarEmg + '<h2 class="det-titulo">' + ic(s.icone) + ' ' + s.titulo + '</h2>' +
     '<ol class="passos">' + s.passos.map(p => '<li>' + p + '</li>').join('') + '</ol>' +
     (s.alerta ? '<div class="alerta-passo">' + ic("alerta") + ' ' + s.alerta + '</div>' : '') +
     '<button class="btn-sos" data-sos style="margin-top:18px">Acionar veterinário da família</button>' +
@@ -468,54 +474,132 @@ function renderSituacao(id) {
   wireEmg();
 }
 
-function renderSOS() {
-  const p = lerPerfil();
+// Antes de listar clínicas ou acionar o veterinário: que tipo de animal precisa de ajuda?
+function escolherTipoAnimal(destino) {
+  const sos = destino === "sos";
   tEmg.innerHTML =
-    '<button class="voltar" id="btVoltarEmg">' + ic("voltar") + ' Voltar</button><h2 class="det-titulo">' + ic("pulso") + ' Acionar veterinário</h2>' +
-    '<p class="secao" style="margin:8px 0 0">Envie um alerta para <b>' + vetFamilia.nome + '</b> (' + vetFamilia.clinica + ') com as primeiras informações. Ela poderá ir até você.</p>' +
-    '<label class="rotulo">Nome do pet</label><input class="campo" id="fPet" value="' + esc(p.petNome) + '">' +
-    '<label class="rotulo">Espécie</label><select class="campo" id="fEspecie"><option' + (p.especie === "cao" ? " selected" : "") + '>Cão</option><option' + (p.especie === "gato" ? " selected" : "") + '>Gato</option><option>Outro</option></select>' +
-    '<label class="rotulo">Situação</label><select class="campo" id="fSituacao">' + primeirosSocorros.map(s => '<option>' + s.titulo + '</option>').join('') + '<option>Outra</option></select>' +
-    '<label class="rotulo">Observações</label><textarea class="campo" id="fObs" rows="3" placeholder="Descreva rapidamente o que está acontecendo"></textarea>' +
-    '<button class="btn-sos" id="btEnviar" style="margin-top:16px">Enviar alerta</button><button class="btn-sec" data-clinicas>Prefiro levar — ver clínicas próximas</button>';
-  wireEmg(); $("btEnviar").addEventListener("click", enviarSOS);
+    btVoltarEmg + '<h2 class="det-titulo">' + ic(sos ? "pulso" : "cruz") + ' ' + (sos ? "Acionar veterinário" : "Clínicas próximas") + '</h2>' +
+    '<p class="secao" style="margin:8px 0 0">Que tipo de animal precisa de ajuda?</p><div class="tipo-conta">' +
+    Object.entries(TIPOS_ANIMAL).map(([v, t]) => '<button class="tipo-op" data-tipo="' + v + '"><span class="tipo-ic">' + ic(t.icone) + '</span><b>' + t.titulo + '</b><small>' + t.sub + '</small></button>').join("") +
+    '</div>';
+  wireEmg();
+  tEmg.querySelectorAll("[data-tipo]").forEach(b => b.addEventListener("click", () => (sos ? renderSOS : renderClinicasEmergencia)(b.dataset.tipo)));
 }
 
-function enviarSOS() {
-  const pet = $("fPet").value || "Seu pet", esp = $("fEspecie").value, sit = $("fSituacao").value, obs = $("fObs").value || "—";
-  const tempo = Math.round(10 + vetFamilia.distanciaKm * 4);
+async function renderClinicasEmergencia(tipo) {
+  const hora = horaAgora(), silv = tipo === "silvestres";
   tEmg.innerHTML =
-    '<div class="confirma"><div class="check">' + ic("check") + '</div><h3>Alerta enviado</h3><p class="secao" style="margin:0 auto;max-width:440px"><b>' + vetFamilia.nome + '</b> (' + vetFamilia.clinica + ') foi notificada e está a caminho.<br>Chegada estimada: ~' + tempo + ' min.</p></div>' +
-    '<div class="secao"><h3>Informações enviadas ao veterinário</h3><table class="tabela"><tr><td class="rot">Pet</td><td>' + esc(pet) + ' (' + esc(esp) + ')</td></tr><tr><td class="rot">Situação</td><td>' + esc(sit) + '</td></tr><tr><td class="rot">Observações</td><td>' + esc(obs) + '</td></tr></table></div>' +
-    '<button class="btn-sec" data-clinicas>Caso não seja possível, ver clínicas próximas</button><button class="btn-sec" id="btVoltarEmg">Voltar ao início</button>';
+    btVoltarEmg + '<h2 class="det-titulo">' + ic(silv ? "passaro" : "cruz") + ' ' + (silv ? "Clínicas para silvestres e exóticos" : "Clínicas para cães e gatos") + ' <span class="rot-ok">OpenStreetMap</span></h2>' +
+    '<p class="secao" style="margin:8px 0 14px">' + (silv ? "Clínicas que indicam atender silvestres ou exóticos, num raio de " + RAIO_SILVESTRES_KM + " km (são raras)."
+      : "Abertas às " + hora + " (ou sem horário informado). As que indicam emergência ou 24h vêm primeiro; depois, da mais perto para a mais longe.") + '</p>' +
+    '<div id="mapaEmg" class="mapa compacto"></div><div id="parceirasEmg" style="margin-top:18px" hidden></div><div id="listaClin" style="margin-top:12px"><p class="vazio-clin">Carregando…</p></div>';
   wireEmg();
-}
-
-async function renderClinicasEmergencia() {
-  const hora = horaAgora();
-  tEmg.innerHTML = '<button class="voltar" id="btVoltarEmg">' + ic("voltar") + ' Voltar</button><h2 class="det-titulo">' + ic("cruz") + ' Clínicas de emergência abertas agora <span class="rot-db">consulta ao banco</span></h2>' +
-    '<p class="secao" style="margin:8px 0 14px">Filtro: especialidade “emergencia”, abertas às ' + hora + ', ordenadas pela distância.</p><div id="mapaEmg" class="mapa compacto"></div><div id="listaClin" style="margin-top:12px"><p class="vazio-clin">Carregando…</p></div>';
-  wireEmg();
+  if (!temPosicaoReal()) {
+    $("mapaEmg").hidden = true;
+    $("listaClin").innerHTML = htmlLocalizacao(() => renderClinicasEmergencia(tipo));
+    return;
+  }
   try {
     await posicaoTutor();
-    let r = await api("/api/clinicas?meta=1&especialidade=emergencia&hora=" + hora + "&so_abertas=1" + paramsPos());
-    if (r.meta.fonte === "osm" && !r.clinicas.length) r = await api("/api/clinicas?meta=1&hora=" + hora + "&so_abertas=1" + paramsPos());  // sem "emergência" no nome: mostra todas
-    const cl = r.clinicas;
-    montarMapa($("mapaEmg"), cl, { compacto: true });
+    const r = await api("/api/clinicas?meta=1&publico=" + tipo + "&hora=" + hora + (silv ? "" : "&so_abertas=1") + paramsPos());
+    // "emergência" é inferida pelo nome e quase nenhuma clínica a indica: em vez de esconder as outras, ela só sobe na lista
+    const urgente = c => c.especialidades.includes("emergencia") ? 0 : 1;
+    const cl = r.clinicas.slice().sort((a, b) => urgente(a) - urgente(b) || a.distancia_km - b.distancia_km);
+    if (silv && r.meta.fonte === "osm" && !cl.length) { $("mapaEmg").hidden = true; $("listaClin").innerHTML = htmlCaminhoOficial(); return; }
+    const mapaEmg = montarMapa($("mapaEmg"), cl, { compacto: true });
     $("listaClin").innerHTML = (r.meta.aviso ? '<div class="aviso" style="margin-bottom:10px">' + esc(r.meta.aviso) + '</div>' : '') +
-      '<p class="origem">' + (r.meta.fonte === "osm" ? 'dados reais · OpenStreetMap · raio ' + r.meta.raio_km + ' km' : 'dados de demonstração — defina sua localização na aba Mapa') + '</p>' +
-      cl.map(c => '<div class="clinica"><div class="cl-info"><span class="cl-nome">' + esc(c.nome) + (c.fonte === "demo" && c.id === 1 ? ' · sua clínica' : '') + '</span>' +
-      '<small>' + ic("mapa") + ' ' + esc(c.endereco) + ' — ' + num1(c.distancia_km) + ' km</small><small>' + (c.telefone ? ic("telefone") + ' <a href="tel:' + esc(c.telefone.replace(/\s/g, "")) + '">' + esc(c.telefone) + '</a> · ' : '') + ic("relogio") + ' ' + esc(txtHorario(c)) + '</small></div>' +
-      (c.aberta_agora === true ? '<span class="tag24">' + (c.aberto_24h ? '24h' : 'aberta') + '</span>' : '<span class="tagoff">horário ?</span>') + '</div>').join('');
+      cl.map(c => itemClinica(c)).join('');
+    if (mapaEmg) ligarListaAoMapa($("listaClin"), $("mapaEmg"));
+    if (!silv) { const pe = $("parceirasEmg"); $("listaClin").after(pe); renderParceiras(pe, { especialidade: "emergencia" }); }
   } catch { $("listaClin").innerHTML = '<div class="aviso-erro">' + MSG_SEM_API + '</div>'; }
 }
 
+// "Acionar veterinário": a mensagem vai para a clínica real mais próxima que atende o tipo de animal.
+// SIMULAÇÃO: o PatasPerto é um site de teste e nada é enviado de verdade.
+async function renderSOS(tipo) {
+  const p = lerPerfil(), silv = tipo === "silvestres";
+  tEmg.innerHTML = btVoltarEmg + '<h2 class="det-titulo">' + ic("pulso") + ' Acionar veterinário · ' + TIPOS_ANIMAL[tipo].titulo + '</h2>' +
+    '<div id="sosCorpo"><p class="vazio-clin">Procurando a clínica mais próxima…</p></div>';
+  wireEmg();
+  const corpo = $("sosCorpo");
+  if (!temPosicaoReal()) {
+    corpo.innerHTML = '<p class="secao" style="margin:8px 0 0">Para saber qual clínica acionar, defina onde você está:</p>' + htmlLocalizacao(() => renderSOS(tipo));
+    return;
+  }
+  let r;
+  try { r = await api("/api/clinicas?meta=1&publico=" + tipo + "&hora=" + horaAgora() + paramsPos()); }
+  catch { corpo.innerHTML = '<div class="aviso-erro">' + MSG_SEM_API + '</div>'; return; }
+  const alvo = r.clinicas.find(c => c.aberta_agora !== false) || r.clinicas[0];   // a mais próxima que não está fechada
+  if (!alvo) {
+    corpo.innerHTML = silv && r.meta.fonte === "osm" ? htmlCaminhoOficial()
+      : '<div class="aviso" style="margin-top:12px">' + esc(r.meta.aviso || "Nenhuma clínica encontrada perto de você.") + '</div>';
+    return;
+  }
+  corpo.innerHTML =
+    '<p class="secao" style="margin:8px 0 8px">O alerta vai para a clínica ' + (silv ? "de silvestres e exóticos " : "") + 'mais próxima de você:</p>' + itemClinica(alvo) +
+    '<label class="rotulo" for="fPet">Nome do pet</label><input class="campo" id="fPet" value="' + esc(silv ? "" : p.petNome) + '"' + (silv ? ' placeholder="se não tiver nome, deixe em branco"' : '') + '>' +
+    (silv ? '<label class="rotulo" for="fEspecie">Que animal é?</label><input class="campo" id="fEspecie" placeholder="ex.: calopsita, jabuti, gambá, filhote de ave">'
+      : '<label class="rotulo" for="fEspecie">Espécie</label><select class="campo" id="fEspecie"><option' + (p.especie === "cao" ? " selected" : "") + '>Cão</option><option' + (p.especie === "gato" ? " selected" : "") + '>Gato</option></select>') +
+    '<label class="rotulo" for="fSituacao">Situação</label><select class="campo" id="fSituacao">' + primeirosSocorros.map(s => '<option>' + s.titulo + '</option>').join('') + '<option>Outra</option></select>' +
+    '<label class="rotulo" for="fObs">Observações</label><textarea class="campo" id="fObs" rows="3" placeholder="Descreva rapidamente o que está acontecendo"></textarea>' +
+    '<div class="aviso simulado">' + ic("cadeado") + '<span><b>Simulação.</b> O PatasPerto é um site de teste: nenhuma mensagem é enviada de verdade.</span></div>' +
+    '<button class="btn-sos" id="btEnviar" style="margin-top:16px">Enviar alerta (simulação)</button><button class="btn-sec" id="btLevar">Prefiro levar — ver clínicas próximas</button>';
+  $("btEnviar").addEventListener("click", () => enviarSOS(alvo, tipo));
+  $("btLevar").addEventListener("click", () => renderClinicasEmergencia(tipo));
+}
+
+function enviarSOS(alvo, tipo) {
+  const pet = $("fPet").value.trim() || "Sem nome", esp = $("fEspecie").value.trim() || "não informado",
+    sit = $("fSituacao").value, obs = $("fObs").value.trim() || "—";
+  tEmg.innerHTML =
+    '<div class="confirma"><div class="check">' + ic("check") + '</div><h3>Alerta registrado (simulação)</h3>' +
+      '<p class="secao" style="margin:0 auto;max-width:460px">Num app de verdade, esta mensagem iria agora para <b>' + esc(alvo.nome) + '</b>. ' +
+      '<b>Nada foi enviado</b>: o PatasPerto é um site de teste. Em uma emergência real, ligue para a clínica.</p></div>' +
+    (alvo.telefone ? '<a class="btn-sos" href="' + esc(telLink(alvo.telefone)) + '">' + ic("telefone") + ' Ligar para ' + esc(alvo.nome) + '</a>'
+      : '<div class="aviso">Esta clínica não tem telefone no OpenStreetMap. Veja outras clínicas próximas.</div>') +
+    '<div class="secao"><h3>Mensagem que seria enviada</h3><table class="tabela">' +
+      '<tr><td class="rot">Para</td><td>' + esc(alvo.nome) + ' · ' + num1(alvo.distancia_km) + ' km</td></tr>' +
+      '<tr><td class="rot">Tipo de animal</td><td>' + TIPOS_ANIMAL[tipo].titulo + '</td></tr>' +
+      '<tr><td class="rot">Pet</td><td>' + esc(pet) + ' (' + esc(esp) + ')</td></tr>' +
+      '<tr><td class="rot">Situação</td><td>' + esc(sit) + '</td></tr><tr><td class="rot">Observações</td><td>' + esc(obs) + '</td></tr></table></div>' +
+    '<button class="btn-sec" id="btLevar">Ver outras clínicas próximas</button><button class="btn-sec" id="btVoltarEmg">Voltar ao início</button>';
+  wireEmg();
+  $("btLevar").addEventListener("click", () => renderClinicasEmergencia(tipo));
+}
+
+// Animal silvestre sem clínica de silvestres por perto: o caminho certo é o oficial.
+const htmlCaminhoOficial = () =>
+  '<div class="bloco silvestre-oficial"><h3>' + ic("passaro") + ' Animal silvestre ou exótico</h3>' +
+  '<p class="explica" style="margin:0 0 8px">Nenhuma clínica que indique atender <b>silvestres ou exóticos</b> foi encontrada num raio de ' + RAIO_SILVESTRES_KM + ' km. O OpenStreetMap raramente registra isso.</p>' +
+  '<ul class="lista-oficial">' +
+    '<li><b>Animal silvestre solto, machucado ou filhote</b> (ave, gambá, macaco…): acione a <b>Polícia Militar Ambiental</b> pelo <a href="tel:190">190</a> ou procure o <b>Cetas</b> (Centro de Triagem de Animais Silvestres) da sua região. Não leve o animal para casa.</li>' +
+    '<li><b>Pet exótico legalizado</b> (calopsita, jabuti, coelho, réptil…): ligue antes para as clínicas de cães e gatos e pergunte se atendem a espécie. Algumas atendem.</li>' +
+  '</ul></div>';
+
+// Linha de clínica (Mapa e Emergência): nome, endereço, distância, horário e telefone clicável.
+function itemClinica(c, { especialidades = false } = {}) {
+  const horario = ic("relogio") + ' ' + (c.horario_texto ? esc(c.horario_texto) : 'Horário não informado no mapa' + (c.telefone ? ' — ligue antes' : ''));
+  return '<div class="clinica' + (c.aberta_agora === false ? ' fechada-lin' : '') + '" data-id="' + esc(c.id) + '"><div class="cl-info">' +
+    '<span class="cl-nome">' + (c.atende_silvestres ? ic("passaro") + ' ' : '') + esc(c.nome) + '</span>' +
+    '<small>' + ic("mapa") + ' ' + esc(c.endereco) + ' — <b>' + num1(c.distancia_km) + ' km</b></small>' +
+    '<small class="cl-horario">' + horario + '</small>' +
+    ((c.telefone || tutorPos) ? '<small class="cl-acoes">' + (c.telefone ? '<a class="cl-tel" href="' + esc(telLink(c.telefone)) + '">' + ic("telefone") + ' ' + esc(c.telefone) + '</a>' : '') +
+      (tutorPos ? linkRota(c).replace('<a ', '<a class="cl-tel" ') : '') + '</small>' : '') +
+    (c.fonte === "equipe" ? '<small class="selo-equipe">' + ic("check") + ' ' + (c.verificado_por_telefone_em
+      ? 'Confirmada por telefone pela equipe em ' + esc(c.verificado_por_telefone_em.split("-").reverse().join("/"))
+      : 'Pesquisada pela equipe') + (c.fonte_url ? ' · <a href="' + esc(c.fonte_url) + '" target="_blank" rel="noopener">fonte</a>' : '') + '</small>' : '') +
+    (especialidades ? '<small>' + ic("estetoscopio") + ' ' + c.especialidades.map(e => ESPECIALIDADES_NOMES[e] || e).join(", ") + (c.especialidade_inferida ? '*' : '') + '</small>' : '') +
+    '</div>' +
+    (c.aberta_agora === true ? '<span class="tag24">' + (c.aberto_24h ? '24h' : 'aberta') + '</span>' : c.aberta_agora === false ? '<span class="tagoff">fechada</span>' : '<span class="tagoff">horário ?</span>') +
+    '</div>';
+}
+
 /* ================= MAPA (Leaflet + OpenStreetMap) ================= */
-/* As coordenadas vêm do banco (tabelas clinicas e tutores). O mapa é visualização:
-   o filtro "quem está aberta / qual especialidade" continua sendo consulta SQL. */
+/* As clínicas vêm do OpenStreetMap, pelo back-end (banco/clinicas_osm.py). O mapa é visualização:
+   o filtro "quem está aberta / qual especialidade" é feito no servidor. */
 /* Posição do usuário: GPS do navegador ou endereço geocodificado (Nominatim), guardada no
-   navegador. Com posição real, as clínicas vêm do OpenStreetMap; sem ela, dados de demonstração. */
-let tutorPos = null;            // posição em uso no mapa (real ou demo)
+   navegador. As clínicas vêm só do OpenStreetMap; sem posição, o app pede o GPS ou a cidade. */
+let tutorPos = null;            // posição em uso no mapa (GPS ou cidade); null = ainda não definida
 let raioKm = 5;
 function lerPosicao() { try { return JSON.parse(localStorage.getItem("posicao") || "null"); } catch { return null; } }
 function salvarPosicao(p) { try { if (p) localStorage.setItem("posicao", JSON.stringify(p)); else localStorage.removeItem("posicao"); } catch {} tutorPos = p ? { ...p } : null; }
@@ -524,9 +608,8 @@ const paramsPos = () => { const p = lerPosicao(); return p ? "&lat=" + p.lat + "
 const corpoPos = () => { const p = lerPosicao(); return p ? { lat: p.lat, lon: p.lon, raio_km: raioKm } : {}; };
 
 async function posicaoTutor() {
-  const real = lerPosicao();
-  if (real) { tutorPos = { ...real }; return tutorPos; }
-  if (!tutorPos) { const t = await api("/api/tutores/" + TUTOR_ID); tutorPos = { lat: t.lat, lon: t.lon, rotulo: t.endereco + " (demonstração)", fonte: "demo" }; }
+  const real = lerPosicao();   // só a posição real (GPS ou cidade digitada): sem ela, não há clínicas
+  tutorPos = real ? { ...real } : null;
   return tutorPos;
 }
 
@@ -554,24 +637,24 @@ async function usarEndereco(q, aoTerminar) {
 
 function htmlLocalizacao(aoMudar) {
   const p = lerPosicao();
-  const html = '<div class="bloco loc"><h3>' + ic("mapa") + ' Sua localização ' + (p ? '<span class="rot-ok">real · ' + (p.fonte === "gps" ? "GPS" : "endereço") + '</span>' : '<span class="rot-demo">demonstração</span>') + '</h3>' +
-    '<p class="origem">' + (p ? esc(p.rotulo) + ' · ' + p.lat + ', ' + p.lon : 'Nenhuma localização definida: o mapa usa um endereço fictício em Sumaré-SP e clínicas de demonstração.') + '</p>' +
+  const html = '<div class="bloco loc"><h3>' + ic("mapa") + ' Sua localização ' + (p ? '<span class="rot-ok">real · ' + (p.fonte === "gps" ? "GPS" : "endereço") + '</span>' : '<span class="rot-demo">não definida</span>') + '</h3>' +
+    '<p class="origem">' + (p ? esc(p.rotulo) + ' · ' + p.lat + ', ' + p.lon : 'Use o GPS ou digite sua cidade para ver as clínicas veterinárias reais perto de você.') + '</p>' +
     '<div class="mapa-filtros"><button class="btn-sec" id="btGPS">' + ic("gps") + ' Usar meu GPS</button>' +
     '<div class="grupo-end"><input class="campo" id="inEnd" placeholder="ou digite endereço / cidade"><button class="btn-sec" id="btEnd">Definir</button></div>' +
-    (p ? '<button class="btn-sec" id="btLimparPos" title="Voltar aos dados de demonstração">' + ic("fechar") + '</button>' : '') + '</div></div>';
+    (p ? '<button class="btn-sec" id="btLimparPos" title="Apagar a localização" aria-label="Apagar a localização">' + ic("fechar") + '</button>' : '') + '</div></div>';
   setTimeout(() => {
     const g = $("btGPS"), e = $("btEnd"), i = $("inEnd"), l = $("btLimparPos");
     if (g) g.onclick = () => usarGPS(aoMudar);
     if (e) e.onclick = () => usarEndereco(i.value, aoMudar);
     if (i) i.onkeydown = ev => { if (ev.key === "Enter") usarEndereco(i.value, aoMudar); };
-    if (l) l.onclick = () => { salvarPosicao(null); tutorPos = null; toast("Voltando aos dados de demonstração."); aoMudar(); };
+    if (l) l.onclick = () => { salvarPosicao(null); tutorPos = null; toast("Localização apagada."); aoMudar(); };
   }, 0);
   return html;
 }
 const pin = (emoji, classe) => L.divIcon({ className: "pin " + (classe || ""), html: emoji, iconSize: [34, 34], iconAnchor: [17, 17], popupAnchor: [0, -18] });
 const linkRota = c => tutorPos ? '<a href="https://www.google.com/maps/dir/?api=1&origin=' + tutorPos.lat + ',' + tutorPos.lon + '&destination=' + c.lat + ',' + c.lon + '&travelmode=driving" target="_blank" rel="noopener">' + ic("carro") + ' Como chegar</a>' : '';
 
-const txtHorario = c => c.aberto_24h ? 'aberta 24h' : (c.horario_texto || (c.abre ? c.abre + '–' + c.fecha : 'horário não informado'));
+const txtHorario = c => c.horario_texto || 'horário não informado no mapa — ligue antes';
 const txtAberta = c => c.aberta_agora === true ? ' · <span style="color:#12805c">aberta agora</span>' : c.aberta_agora === false ? ' · <span style="color:#b23636">fechada agora</span>' : '';
 function popupClinica(c) {
   return '<b>' + esc(c.nome) + '</b><br>' + ic("mapa") + ' ' + esc(c.endereco) + ' — <b>' + num1(c.distancia_km) + ' km</b>' +
@@ -580,6 +663,24 @@ function popupClinica(c) {
     '<br>' + ic("relogio") + ' ' + esc(txtHorario(c)) + txtAberta(c) +
     '<br>' + ic("estetoscopio") + ' ' + c.especialidades.map(e => ESPECIALIDADES_NOMES[e] || e).join(", ") + (c.especialidade_inferida ? ' <small>(inferida pelo nome)</small>' : '') +
     '<br>' + linkRota(c) + (c.osm_url ? ' · <a href="' + esc(c.osm_url) + '" target="_blank" rel="noopener">ver no OSM</a>' : '');
+}
+
+// Clicar numa clínica da lista centraliza o mapa nela e abre a ficha (Mapa, Recomendação e Emergência).
+// Links dentro do cartão (ligar, como chegar, fonte) continuam funcionando normalmente.
+function ligarListaAoMapa(lista, elMapa) {
+  lista.querySelectorAll(".clinica[data-id]").forEach(el => {
+    el.tabIndex = 0; el.setAttribute("role", "button"); el.title = "Ver no mapa";
+    const abrir = ev => {
+      if (ev.target.closest("a, button, select, textarea, input")) return;
+      const mk = elMapa._marcadores && elMapa._marcadores[el.dataset.id];
+      if (!mk) return;
+      lista.querySelectorAll(".clinica").forEach(x => x.classList.remove("sel")); el.classList.add("sel");
+      elMapa._mapa.setView(mk.getLatLng(), 16, { animate: true }); mk.openPopup();
+      elMapa.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    el.addEventListener("click", abrir);
+    el.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); abrir(ev); } });
+  });
 }
 
 function montarMapa(el, clinicas, opcoes = {}) {
@@ -600,7 +701,7 @@ function montarMapa(el, clinicas, opcoes = {}) {
     const p = [c.lat, c.lon]; pontos.push(p);
     const fechada = c.aberta_agora === false;
     if (!c.lat || !c.lon) return;
-    const mk = L.marker(p, { icon: pin(ic("cruz"), (fechada ? "fechada" : "") + (c.id === opcoes.destaque ? " destaque" : "")) }).addTo(m).bindPopup(popupClinica(c));
+    const mk = L.marker(p, { icon: pin(ic(c.atende_silvestres ? "passaro" : "cruz"), (fechada ? "fechada" : "") + (c.atende_silvestres ? " silvestre" : "") + (c.id === opcoes.destaque ? " destaque" : "")) }).addTo(m).bindPopup(popupClinica(c));
     el._marcadores[c.id] = mk;
   });
   if (pontos.length) m.fitBounds(pontos, { padding: [36, 36], maxZoom: 15 }); else m.setView([-22.8219, -47.2669], 14);
@@ -611,48 +712,56 @@ const ESPECIALIDADES_NOMES = { emergencia: "Emergência", dermatologia: "Dermato
 
 function renderMapa() {
   telas.mapa.innerHTML =
-    '<h2 class="det-titulo">' + ic("mapa") + ' Clínicas perto de você <span class="rot-db">consulta ao banco</span></h2>' +
+    '<h2 class="det-titulo">' + ic("mapa") + ' Clínicas perto de você <span class="rot-ok">OpenStreetMap</span></h2>' +
     '<p class="secao" style="margin:6px 0 0">Com a sua localização, as clínicas vêm do <b>OpenStreetMap</b> (dados reais, mantidos por voluntários). Os filtros são consulta a dados — o mapa só desenha o resultado.</p>' +
     htmlLocalizacao(atualizarMapa) +
     '<div class="bloco"><div class="mapa-filtros">' +
       '<div style="flex:0 0 110px"><label class="rotulo" style="margin-top:0">Raio</label><select class="campo" id="mRaio">' + [2, 5, 10, 20].map(r => '<option value="' + r + '"' + (r === raioKm ? ' selected' : '') + '>' + r + ' km</option>').join("") + '</select></div>' +
-      '<div><label class="rotulo" style="margin-top:0">Especialidade</label><select class="campo" id="mEsp"><option value="">Todas</option>' + Object.entries(ESPECIALIDADES_NOMES).map(([v, n]) => '<option value="' + v + '">' + n + '</option>').join("") + '</select></div>' +
       '<div><label class="rotulo" style="margin-top:0">Horário</label><input class="campo" id="mHora" type="time" value="' + horaAgora() + '"></div>' +
       '<div style="flex:0 0 auto"><label class="rotulo" style="margin-top:0">&nbsp;</label><label class="campo" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="mAbertas" checked> só abertas</label></div>' +
     '</div>' +
     '<div id="mapaGeral" class="mapa"></div>' +
     '<div class="leg"><span class="l-voce">você</span><span class="l-aberta">clínica aberta</span><span class="l-fechada">clínica fechada</span><span class="l-anel">anéis de 1 km e 2 km</span></div></div>' +
-    '<div id="mapaLista" style="margin-top:14px"><p class="vazio-clin">Carregando…</p></div>';
-  ["mEsp", "mHora", "mAbertas"].forEach(id => $(id).addEventListener("change", atualizarMapa));
+    '<div id="mapaLista" style="margin-top:14px"><p class="vazio-clin">Carregando…</p></div><div id="parceiras" style="margin-top:22px"></div>';
+  ["mHora", "mAbertas"].forEach(id => $(id).addEventListener("change", atualizarMapa));
   $("mRaio").addEventListener("change", () => { raioKm = +$("mRaio").value; atualizarMapa(); });
   atualizarMapa();
+  renderParceiras($("parceiras"));
 }
 
 async function atualizarMapa() {
-  if (!$("mEsp")) return;
-  const esp = $("mEsp").value, hora = $("mHora").value || horaAgora(), soAbertas = $("mAbertas").checked;
+  if (!$("mHora")) return;
+  const hora = $("mHora").value || horaAgora(), soAbertas = $("mAbertas").checked;
   const lista = $("mapaLista");
   const blocoLoc = telas.mapa.querySelector(".bloco.loc"); if (blocoLoc) blocoLoc.outerHTML = htmlLocalizacao(atualizarMapa);
-  lista.innerHTML = '<p class="vazio-clin">Buscando clínicas' + (temPosicaoReal() ? ' reais no OpenStreetMap (raio ' + raioKm + ' km)' : '') + '…</p>';
+  $("mapaGeral").parentElement.hidden = !temPosicaoReal();
+  if (!temPosicaoReal()) {
+    lista.innerHTML = '<p class="vazio-clin">Defina sua localização acima (GPS ou cidade) para ver as clínicas reais perto de você.</p>';
+    return;
+  }
+  lista.innerHTML = '<p class="vazio-clin">Buscando clínicas reais no OpenStreetMap (raio ' + raioKm + ' km)…</p>';
   try {
     await posicaoTutor();
-    const r = await api("/api/clinicas?meta=1&hora=" + hora + (esp ? "&especialidade=" + esp : "") + paramsPos());
-    const todas = r.clinicas, meta = r.meta;
-    const mostradas = soAbertas ? todas.filter(c => c.aberta_agora !== false) : todas;
-    const mapa = montarMapa($("mapaGeral"), mostradas);
-    const fonte = meta.fonte === "osm" ? '<span class="rot-ok">dados reais · OpenStreetMap</span>' : '<span class="rot-demo">dados de demonstração</span>';
+    // dois grupos: cães e gatos (no raio escolhido) e silvestres/exóticos (sempre no raio máximo: são raras)
+    const [r, rs] = await Promise.all([
+      api("/api/clinicas?meta=1&publico=domesticos&hora=" + hora + paramsPos()),
+      api("/api/clinicas?meta=1&publico=silvestres&hora=" + hora + paramsPos()).catch(() => ({ clinicas: [], meta: {} })),
+    ]);
+    const meta = r.meta, filtrar = l => soAbertas ? l.filter(c => c.aberta_agora !== false) : l;
+    const domesticas = filtrar(r.clinicas), silvestres = filtrar(rs.clinicas);
+    const mapa = montarMapa($("mapaGeral"), [...domesticas, ...silvestres]);
+    const temEquipe = [...domesticas, ...silvestres].some(c => c.fonte === "equipe");
+    const fonte = '<span class="rot-ok">dados reais · ' + (meta.fonte === "osm" ? 'OpenStreetMap' + (temEquipe ? ' + pesquisa da equipe' : '') : 'pesquisa da equipe') + '</span>';
     lista.innerHTML = (meta.aviso ? '<div class="aviso" style="margin-bottom:10px">' + esc(meta.aviso) + '</div>' : '') +
-      '<p class="info" style="padding:0 0 8px">' + mostradas.length + ' clínica(s)' + (esp ? ' de ' + ESPECIALIDADES_NOMES[esp] : '') + (soAbertas ? ' abertas (ou sem horário informado) às ' + hora : '') + (meta.fonte === "osm" ? ' num raio de ' + meta.raio_km + ' km' : '') + ', da mais perto para a mais longe · ' + fonte + '</p>' +
-      (mostradas.length ? mostradas.map(c => '<div class="clinica' + (c.aberta_agora ? '' : ' fechada-lin') + '" data-id="' + c.id + '"><div class="cl-info"><span class="cl-nome">' + esc(c.nome) + '</span>' +
-        '<small>' + ic("mapa") + ' ' + esc(c.endereco) + ' — <b>' + num1(c.distancia_km) + ' km</b>' + (c.telefone ? ' · ' + ic("telefone") + ' ' + esc(c.telefone) : '') + '</small><small>' + ic("estetoscopio") + ' ' + c.especialidades.map(e => ESPECIALIDADES_NOMES[e] || e).join(", ") + (c.especialidade_inferida ? '*' : '') + ' · ' + ic("relogio") + ' ' + esc(txtHorario(c)) + '</small></div>' +
-        (c.aberta_agora === true ? '<span class="tag24">' + (c.aberto_24h ? '24h' : 'aberta') + '</span>' : c.aberta_agora === false ? '<span class="tagoff">fechada</span>' : '<span class="tagoff">horário ?</span>') + '</div>').join("") +
-        (mostradas.some(c => c.especialidade_inferida) ? '<p class="explica">* Especialidade inferida pelo nome da clínica (o OpenStreetMap não registra especialidades). Confirme por telefone.</p>' : '') :
-        '<p class="vazio-clin">Nenhuma clínica com esse filtro. Desmarque "só abertas" ou mude o horário.</p>');
-    lista.querySelectorAll(".clinica").forEach(el => el.addEventListener("click", () => {
-      lista.querySelectorAll(".clinica").forEach(x => x.classList.remove("sel")); el.classList.add("sel");
-      const mk = $("mapaGeral")._marcadores[el.dataset.id];
-      if (mk && mapa) { mapa.setView(mk.getLatLng(), 16, { animate: true }); mk.openPopup(); $("mapaGeral").scrollIntoView({ behavior: "smooth", block: "center" }); }
-    }));
+      '<h3 class="grupo-clin">' + ic("pata") + ' Cães e gatos <span class="qtd-grupo">' + domesticas.length + '</span></h3>' +
+      '<p class="info" style="padding:0 0 8px">' + (soAbertas ? 'Abertas (ou sem horário informado) às ' + hora : 'Todas') + (meta.fonte === "osm" ? ', num raio de ' + meta.raio_km + ' km' : '') + ', da mais perto para a mais longe · ' + fonte + '</p>' +
+      (domesticas.length ? domesticas.map(c => itemClinica(c)).join("")
+        : (meta.aviso ? '' : '<p class="vazio-clin">Nenhuma clínica aberta nesse horário. Desmarque "só abertas" ou mude o horário.</p>')) +   // com aviso, ele já explica o motivo
+      (rs.meta.fonte !== "osm" ? '' :
+        '<h3 class="grupo-clin">' + ic("passaro") + ' Silvestres e exóticos <span class="qtd-grupo">' + silvestres.length + '</span></h3>' +
+        (silvestres.length ? '<p class="info" style="padding:0 0 8px">Num raio de ' + RAIO_SILVESTRES_KM + ' km (são raras). Confirme por telefone se atendem a espécie.</p>' + silvestres.map(c => itemClinica(c)).join("")
+          : htmlCaminhoOficial()));
+    if (mapa) ligarListaAoMapa(lista, $("mapaGeral"));
   } catch (e) { lista.innerHTML = '<div class="aviso-erro">' + MSG_SEM_API + '</div>'; }
 }
 
@@ -664,9 +773,9 @@ async function atualizarMapa() {
 function aplicarConta(c, modo) {
   conta = c;
   TUTOR_ID = c && c.tipo === "cliente" ? c.tutor.id : 1;
-  tutorPos = null;                       // a posição demo depende do tutor
   document.body.dataset.modo = modo || (c ? c.tipo : "visitante");
   atualizarConta();
+  carrinho = lerCarrinho(); salvarCarrinho();   // trocou de conta: carrega o carrinho dela
 }
 
 function abrirLogin(aba) { aplicarConta(null, "anon"); mostrar("login"); renderLogin(aba); }
@@ -723,7 +832,7 @@ function renderLogin(aba = "entrar", tipo = "cliente") {
       '<label class="chk"><input type="checkbox" id="k24"> Atendimento 24 horas</label>' +
       '<span class="rotulo">Especialidades</span><div class="chk-grupo">' +
         Object.entries(ESPECIALIDADES_NOMES).map(([v, n]) => '<label class="chk"><input type="checkbox" name="kEsp" value="' + v + '"' + (v === "clinico_geral" ? " checked" : "") + '> ' + n + '</label>').join("") + '</div>' +
-      '<p class="explica">A clínica aparece na lista de clínicas de demonstração (posição fictícia na cidade do demo).</p></div>';
+      '<p class="explica">A conta de clínica dá acesso ao painel de indicadores dos clientes do PatasPerto. A lista de clínicas que os tutores veem vem só do OpenStreetMap.</p></div>';
 
   telas.login.innerHTML =
     '<div class="auth-topo"><img class="auth-logo" src="/static/img/logo.png" alt="" width="262" height="192"><h2>Bem-vindo ao PatasPerto</h2><p>Entre com sua conta de <b>tutor</b> ou de <b>clínica</b>.</p></div>' +
@@ -782,66 +891,288 @@ function renderLogin(aba = "entrar", tipo = "cliente") {
   });
 }
 
-/* ================= PAINEL DA CLÍNICA =================
-   Tudo aqui é CONSULTA/AGREGAÇÃO AO BANCO (GROUP BY em banco/consultas.py) — não é IA.
-   A clínica vê só totais agregados: nenhum CPF, nome ou dado de saúde individual. */
+/* ================= PAINEL DA CLÍNICA (CRM) =================
+   Duas partes, bem separadas:
+   - CONTATOS: pedidos de tutores que AUTORIZARAM enviar nome, contato e dados básicos do pet a esta clínica;
+   - MERCADO: agregações SQL (COUNT/SUM/GROUP BY em banco/consultas.py) — não é IA e não tem dado individual (LGPD). */
 const NOME_ESPECIE = { cao: "Cães", gato: "Gatos" };
 const fmtInt = n => Number(n).toLocaleString("pt-BR");
 const fmtR$ = v => "R$ " + Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const ETAPAS = { novo: "Novos", em_contato: "Em contato", agendado: "Agendados", atendido: "Atendidos", perdido: "Perdidos" };
+const ETAPA_UM = { novo: "Novo", em_contato: "Em contato", agendado: "Agendado", atendido: "Atendido", perdido: "Perdido" };
+const CONTATO_NOME = { telefone: "Telefone", whatsapp: "WhatsApp", email: "E-mail" };
+const SECOES_CRM = [
+  ["geral", "grafico", "Visão geral"], ["contatos", "usuario", "Contatos"], ["demanda", "ia", "Demanda da região"],
+  ["mercado", "carrinho", "Produtos e clientes"], ["clinica", "cruz", "Minha clínica"],
+];
+const crm = { secao: "geral", dias: 90, periodo: "mes", d: null, leads: [], filtroEtapa: null };
 
 function barraH(rotulo, sub, valor, max, txt, destaque) {
   return '<div class="hbar' + (destaque ? " top" : "") + '"><span class="hb-rot">' + esc(rotulo) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span>' +
     '<div class="trilho"><div class="fill" style="width:' + (max ? Math.max(2, valor / max * 100) : 0) + '%"></div></div><span class="hb-val">' + txt + '</span></div>';
 }
+// variação contra o período anterior: ▲ 12% / ▼ 5% / "novo"
+function delta(atual, anterior, menosEhMelhor) {
+  if (!anterior) return atual ? '<span class="delta neutro">novo</span>' : '';
+  const p = (atual - anterior) / anterior, bom = menosEhMelhor ? p < 0 : p > 0;
+  if (Math.abs(p) < 0.005) return '<span class="delta neutro">= estável</span>';
+  return '<span class="delta ' + (bom ? "up" : "down") + '" title="período anterior: ' + esc(anterior) + '">' + (p > 0 ? "▲ " : "▼ ") + Math.abs(Math.round(p * 100)) + '%</span>';
+}
+const tempoDesde = iso => {
+  const dias = Math.floor((Date.now() - new Date(iso)) / 864e5);
+  return dias <= 0 ? "hoje" : dias === 1 ? "ontem" : "há " + dias + " dias";
+};
+const digitos = t => (t || "").replace(/\D/g, "");
+const linkWhats = t => "https://wa.me/" + (digitos(t).startsWith("55") ? "" : "55") + digitos(t);
+// CSV para abrir no Excel (";" e BOM). Textos que começam com = + - @ ganham ' na frente: evita fórmula injetada.
+function baixarCSV(nome, cabecalho, linhas) {
+  const cel = v => { let s = String(v ?? ""); if (/^[=+\-@]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
+  const csv = [cabecalho, ...linhas].map(l => l.map(cel).join(";")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+  a.download = nome; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+const btCSV = id => '<button class="btn-csv" id="' + id + '">' + ic("seta") + ' Exportar CSV</button>';
 
-async function renderPainel(periodo = "mes") {
-  telas.painel.innerHTML = '<p class="vazio-clin">Carregando indicadores…</p>';
-  let d;
-  try { d = await api("/api/clinica/painel?periodo=" + periodo); }
-  catch (e) {
+async function renderPainel() {
+  telas.painel.innerHTML = '<p class="vazio-clin">Carregando o painel…</p>';
+  try {
+    const [d, l] = await Promise.all([api("/api/clinica/painel?periodo=" + crm.periodo + "&dias=" + crm.dias), api("/api/clinica/leads")]);
+    crm.d = d; crm.leads = l.leads;
+  } catch (e) {
     if (/login/.test(e.message)) { abrirLogin("entrar"); toast("Sua sessão expirou. Entre novamente."); return; }
     telas.painel.innerHTML = '<div class="aviso-erro">' + (e.message.startsWith("HTTP") || e.message.includes("fetch") ? MSG_SEM_API : esc(e.message)) + '</div>';
     return;
   }
-  const t = d.totais, c = d.clinica;
-  const kpi = (ic, valor, rot) => '<div class="kpi"><span class="kpi-ic">' + ic + '</span><span class="kpi-v">' + valor + '</span><span class="kpi-r">' + rot + '</span></div>';
-  const maxItens = Math.max(1, ...d.mais_comprados.map(x => x.itens));
-  const totPets = d.especies.reduce((s, e) => s + e.n, 0) || 1;
-  const maxRaca = Math.max(1, ...d.racas.map(r => r.n));
-  const maxVol = Math.max(1, ...d.volume.map(v => v.compras));
-  const rotDb = '<span class="rot-db">GROUP BY</span>';
+  desenharCRM();
+}
 
+function desenharCRM() {
+  const c = crm.d.clinica, novos = crm.leads.filter(l => l.status === "novo").length;
   telas.painel.innerHTML =
-    '<h2 class="det-titulo">' + ic("cruz") + ' ' + esc(c.nome) + ' <span class="rot-db">consulta ao banco · agregação</span></h2>' +
-    '<p class="secao" style="margin:6px 0 0">Indicadores dos clientes do PatasPerto calculados com <b>consultas de agregação ao banco</b> (COUNT, SUM, AVG + GROUP BY) — <b>não é IA</b>. Últimos ' + d.janela_dias + ' dias.</p>' +
+    '<div class="crm"><aside class="crm-menu" aria-label="Seções do painel">' +
+      '<div class="crm-marca"><span class="crm-avatar">' + ic("cruz") + '</span><span><b>' + esc(c.nome) + '</b><small>Painel da clínica</small></span></div>' +
+      SECOES_CRM.map(([id, icone, nome]) => '<button class="crm-item' + (crm.secao === id ? ' ativo' : '') + '" data-secao="' + id + '"' + (crm.secao === id ? ' aria-current="page"' : '') + '>' +
+        ic(icone) + '<span>' + nome + '</span>' + (id === "contatos" && novos ? '<span class="crm-badge" aria-label="' + novos + ' novos">' + novos + '</span>' : '') + '</button>').join("") +
+    '</aside><section class="crm-conteudo" id="crmConteudo"></section></div>';
+  telas.painel.querySelectorAll("[data-secao]").forEach(b => b.addEventListener("click", () => { crm.secao = b.dataset.secao; desenharCRM(); }));
+  ({ geral: secaoGeral, contatos: secaoContatos, demanda: secaoDemanda, mercado: secaoMercado, clinica: secaoClinica })[crm.secao]($("crmConteudo"));
+}
+
+const chipsDias = () => '<div class="filtros periodo" role="group" aria-label="Período">' + [30, 90, 180].map(n =>
+  '<button class="chip' + (crm.dias === n ? ' ativo' : '') + '" data-dias="' + n + '">' + n + ' dias</button>').join("") + '</div>';
+const ligarChipsDias = el => el.querySelectorAll("[data-dias]").forEach(b => b.addEventListener("click", () => { crm.dias = +b.dataset.dias; renderPainel(); }));
+const cabecalhoSecao = (titulo, sub, extra) => '<div class="crm-topo"><div><h2>' + titulo + '</h2><p>' + sub + '</p></div>' + (extra || '') + '</div>';
+
+function cartaoKpi(icone, valor, rotulo, variacao, alvo) {
+  return '<' + (alvo ? 'button data-ir="' + alvo + '"' : 'div') + ' class="kpi"><span class="kpi-ic">' + ic(icone) + '</span><span class="kpi-v">' + valor + '</span>' +
+    '<span class="kpi-r">' + rotulo + '</span>' + (variacao || '') + '</' + (alvo ? 'button' : 'div') + '>';
+}
+
+function secaoGeral(el) {
+  const d = crm.d, cp = d.comparativo, dm = d.demanda_ia, ct = d.contatos;
+  const maxVol = Math.max(1, ...d.volume.map(v => v.compras));
+  const abertos = crm.leads.filter(l => l.status === "novo" || l.status === "em_contato").slice(0, 4);
+  el.innerHTML =
+    cabecalhoSecao("Visão geral", "Últimos " + d.janela_dias + " dias, comparados com os " + d.janela_dias + " dias anteriores.", chipsDias()) +
     '<div class="kpis">' +
-      kpi(ic("grupo"), fmtInt(t.clientes), "clientes cadastrados") + kpi(ic("pata"), fmtInt(t.pets), "pets") +
-      kpi(ic("carrinho"), fmtInt(t.compras), "compras no período") + kpi(ic("dinheiro"), fmtR$(t.faturamento), "volume em compras") +
-      kpi(ic("recibo"), fmtR$(t.ticket_medio), "ticket médio") + kpi(ic("estetoscopio"), fmtInt(t.pets_com_obs_saude), "pets com obs. de saúde") + '</div>' +
+      cartaoKpi("usuario", fmtInt(ct.novo), "contatos novos", ct.em_contato ? '<span class="delta neutro">+' + ct.em_contato + ' em contato</span>' : '', "contatos") +
+      cartaoKpi("ia", fmtInt(dm.total_atual), "recomendações da IA na região", delta(dm.total_atual, dm.total_anterior), "demanda") +
+      cartaoKpi("carrinho", fmtInt(cp.compras.atual), "compras dos tutores", delta(cp.compras.atual, cp.compras.anterior)) +
+      cartaoKpi("dinheiro", fmtR$(cp.faturamento.atual), "volume em compras", delta(cp.faturamento.atual, cp.faturamento.anterior)) +
+      cartaoKpi("recibo", fmtR$(cp.ticket_medio.atual), "ticket médio", delta(cp.ticket_medio.atual, cp.ticket_medio.anterior)) +
+      cartaoKpi("grupo", fmtInt(cp.clientes_ativos.atual), "tutores que compraram", delta(cp.clientes_ativos.atual, cp.clientes_ativos.anterior)) +
+    '</div>' +
     '<div class="painel-grid">' +
-      '<div class="bloco"><h3>' + ic("carrinho") + ' O que os clientes mais compram ' + rotDb + '</h3><p class="origem">itens vendidos por produto · GROUP BY produto</p>' +
-        d.mais_comprados.map((x, i) => barraH(x.nome, x.categoria + " · " + x.clientes + " clientes", x.itens, maxItens, fmtInt(x.itens), i === 0)).join("") + '</div>' +
-      '<div class="bloco"><h3>' + ic("pata") + ' Espécies e raças ' + rotDb + '</h3><p class="origem">pets cadastrados · GROUP BY espécie, raça</p>' +
+      '<div class="bloco"><h3>' + ic("usuario") + ' Contatos para responder</h3>' +
+        (abertos.length ? abertos.map(l => '<button class="lead-mini" data-ir="contatos"><span><b>' + esc(l.tutor.nome) + '</b><small>' + esc(l.motivo) + ' · ' + tempoDesde(l.criado_em) + '</small></span>' +
+          '<span class="etapa etapa-' + l.status + '">' + ETAPA_UM[l.status] + '</span></button>').join("")
+          : '<p class="vazio-clin">Nenhum contato pendente. Os pedidos dos tutores aparecem aqui.</p>') + '</div>' +
+      '<div class="bloco"><h3>' + ic("grafico") + ' Compras por período <span class="rot-db">GROUP BY</span></h3>' +
+        '<div class="filtros periodo" role="group" aria-label="Agrupar por"><button class="chip' + (crm.periodo === "mes" ? " ativo" : "") + '" data-per="mes">Por mês</button><button class="chip' + (crm.periodo === "semana" ? " ativo" : "") + '" data-per="semana">Por semana</button></div>' +
+        '<div class="colunas">' + d.volume.map(v => '<div class="col" title="' + v.compras + ' compras · ' + fmtR$(v.valor) + '"><span class="col-v">' + v.compras + '</span>' +
+          '<div class="col-b" style="height:' + (v.compras / maxVol * 100) + '%"></div><span class="col-r">' + v.periodo + '</span></div>').join("") + '</div></div>' +
+    '</div>';
+  ligarChipsDias(el);
+  el.querySelectorAll("[data-ir]").forEach(b => b.addEventListener("click", () => { crm.secao = b.dataset.ir; desenharCRM(); }));
+  el.querySelectorAll("[data-per]").forEach(b => b.addEventListener("click", () => { crm.periodo = b.dataset.per; renderPainel(); }));
+}
+
+function cartaoLead(l) {
+  const p = l.pet, pet = [p.nome, NOME_ESPECIE[p.especie] ? (p.especie === "cao" ? "cão" : "gato") : "", p.raca, p.idade_anos != null ? num1(p.idade_anos).replace(",0", "") + " anos" : ""].filter(Boolean).join(" · ");
+  const acoes = [
+    l.tutor.telefone ? '<a class="acao" href="' + esc(telLink(l.tutor.telefone)) + '">' + ic("telefone") + ' Ligar</a>' : '',
+    l.tutor.telefone ? '<a class="acao" href="' + esc(linkWhats(l.tutor.telefone)) + '" target="_blank" rel="noopener">' + ic("pulso") + ' WhatsApp</a>' : '',
+    l.tutor.email ? '<a class="acao" href="mailto:' + esc(l.tutor.email) + '">' + ic("recibo") + ' E-mail</a>' : '',
+  ].join("");
+  return '<article class="lead" data-id="' + l.id + '">' +
+    '<div class="lead-topo"><b>' + esc(l.tutor.nome) + '</b><small>' + tempoDesde(l.criado_em) + '</small></div>' +
+    '<p class="lead-motivo">' + esc(l.motivo) + '</p>' +
+    (pet ? '<p class="lead-pet">' + ic("pata") + ' ' + esc(pet) + '</p>' : '') +
+    (l.mensagem ? '<p class="lead-msg">“' + esc(l.mensagem) + '”</p>' : '') +
+    '<p class="lead-pref">Prefere: <b>' + CONTATO_NOME[l.contato_preferido] + '</b></p>' +
+    '<div class="lead-acoes">' + acoes + '</div>' +
+    '<label class="rotulo" for="et' + l.id + '">Etapa</label><select class="campo" id="et' + l.id + '" data-etapa>' +
+      Object.entries(ETAPA_UM).map(([v, n]) => '<option value="' + v + '"' + (v === l.status ? ' selected' : '') + '>' + n + '</option>').join("") + '</select>' +
+    '<label class="rotulo" for="nt' + l.id + '">Anotação interna</label><textarea class="campo" id="nt' + l.id + '" rows="2" maxlength="1000" placeholder="Ex.: consulta marcada sexta 15h" data-nota>' + esc(l.nota) + '</textarea>' +
+    '<button class="btn-sec" data-salvar>Salvar anotação</button>' +
+    '</article>';
+}
+
+function secaoContatos(el) {
+  const ct = crm.d.contatos, filtro = crm.filtroEtapa;
+  const etapas = Object.keys(ETAPAS).filter(e => !filtro || e === filtro);
+  el.innerHTML =
+    cabecalhoSecao("Contatos", "Tutores que pediram para ser contatados por " + esc(crm.d.clinica.nome) + ".", btCSV("csvLeads")) +
+    '<div class="aviso lgpd">' + ic("cadeado") + ' Cada tutor <b>autorizou</b> o envio do nome, do contato e dos dados básicos do pet para esta clínica. Use só para responder a este pedido. Dados de saúde não são enviados (LGPD).</div>' +
+    '<div class="funil" role="group" aria-label="Filtrar por etapa">' +
+      '<button class="chip' + (!filtro ? ' ativo' : '') + '" data-filtro="">Todas (' + crm.leads.length + ')</button>' +
+      Object.entries(ETAPAS).map(([e, n]) => '<button class="chip' + (filtro === e ? ' ativo' : '') + '" data-filtro="' + e + '">' + n + ' (' + ct[e] + ')</button>').join("") + '</div>' +
+    (crm.leads.length ? '<div class="kanban">' + etapas.map(e => {
+      const daEtapa = crm.leads.filter(l => l.status === e);
+      return '<section class="kanban-col"><h3><span class="etapa etapa-' + e + '">' + ETAPAS[e] + '</span><span class="qtd-grupo">' + daEtapa.length + '</span></h3>' +
+        (daEtapa.length ? daEtapa.map(cartaoLead).join("") : '<p class="vazio-clin">Nenhum.</p>') + '</section>';
+    }).join("") + '</div>'
+      : '<div class="bloco"><p class="vazio-clin">Ainda não há pedidos. Os tutores pedem contato pela aba Mapa, em "Clínicas parceiras PatasPerto".</p></div>');
+
+  el.querySelectorAll("[data-filtro]").forEach(b => b.addEventListener("click", () => { crm.filtroEtapa = b.dataset.filtro || null; secaoContatos(el); }));
+  const salvar = async (card, corpo, msg) => {
+    try {
+      const novo = await api("/api/clinica/leads/" + card.dataset.id, { method: "PATCH", body: JSON.stringify(corpo) });
+      const i = crm.leads.findIndex(l => l.id === novo.id), antigo = crm.leads[i].status;
+      crm.leads[i] = novo;
+      if (antigo !== novo.status) { crm.d.contatos[antigo]--; crm.d.contatos[novo.status]++; desenharCRM(); }
+      toast(msg);
+    } catch (e) { toast("Não foi possível salvar: " + e.message, 4000); }
+  };
+  el.querySelectorAll(".lead").forEach(card => {
+    card.querySelector("[data-etapa]").addEventListener("change", e => salvar(card, { status: e.target.value }, "Movido para " + ETAPA_UM[e.target.value] + "."));
+    card.querySelector("[data-salvar]").addEventListener("click", () => salvar(card, { nota: card.querySelector("[data-nota]").value }, "Anotação salva."));
+  });
+  const csv = $("csvLeads");
+  if (csv) csv.addEventListener("click", () => baixarCSV("contatos-" + new Date().toISOString().slice(0, 10) + ".csv",
+    ["Data", "Etapa", "Tutor", "Telefone", "E-mail", "Prefere", "Pet", "Espécie", "Raça", "Motivo", "Mensagem", "Anotação"],
+    crm.leads.map(l => [l.criado_em.slice(0, 10), ETAPA_UM[l.status], l.tutor.nome, l.tutor.telefone, l.tutor.email, CONTATO_NOME[l.contato_preferido],
+      l.pet.nome, l.pet.especie, l.pet.raca, l.motivo, l.mensagem, l.nota])));
+}
+
+function secaoDemanda(el) {
+  const dm = crm.d.demanda_ia, esp = dm.especialidades, max = Math.max(1, ...esp.map(e => e.atual));
+  const cresce = esp.filter(e => e.anterior && e.atual > e.anterior).sort((a, b) => b.atual / b.anterior - a.atual / a.anterior)[0];
+  const maxSit = Math.max(1, ...dm.situacoes.map(s => s.n));
+  el.innerHTML =
+    cabecalhoSecao("Demanda da região", "O que a IA do PatasPerto indicou aos tutores nos últimos " + crm.d.janela_dias + " dias. Registro anônimo: nenhum tutor é identificado.", chipsDias() + btCSV("csvDemanda")) +
+    (cresce ? '<div class="destaque-crm">' + ic("grafico") + '<span><b>Oportunidade:</b> a procura por <b>' + esc(ESPECIALIDADES_NOMES[cresce.especialidade] || cresce.especialidade) + '</b> cresceu ' +
+      Math.round((cresce.atual / cresce.anterior - 1) * 100) + '% em relação ao período anterior.</span></div>' : '') +
+    '<div class="painel-grid">' +
+      '<div class="bloco"><h3>' + ic("estetoscopio") + ' Especialidades indicadas pela IA <span class="rot-ia">IA · Random Forest</span></h3><p class="origem">' + fmtInt(dm.total_atual) + ' recomendações ' + delta(dm.total_atual, dm.total_anterior) + '</p>' +
+        (esp.length ? esp.map((e, i) => barraH(ESPECIALIDADES_NOMES[e.especialidade] || e.especialidade, "antes: " + e.anterior, e.atual, max, fmtInt(e.atual) + ' ' + delta(e.atual, e.anterior), i === 0)).join("")
+          : '<p class="vazio-clin">Ainda não há recomendações neste período.</p>') + '</div>' +
+      '<div class="bloco"><h3>' + ic("alerta") + ' O que os tutores relataram</h3><p class="origem">situações informadas ao pedir a recomendação</p>' +
+        dm.situacoes.map((s, i) => barraH(NOME_SIT[s.situacao] || s.situacao, null, s.n, maxSit, fmtInt(s.n), i === 0)).join("") + '</div>' +
+    '</div>';
+  ligarChipsDias(el);
+  $("csvDemanda").addEventListener("click", () => baixarCSV("demanda-ia-" + crm.d.janela_dias + "dias.csv", ["Especialidade", "Período atual", "Período anterior"],
+    esp.map(e => [ESPECIALIDADES_NOMES[e.especialidade] || e.especialidade, e.atual, e.anterior])));
+}
+
+function secaoMercado(el) {
+  const d = crm.d, rotDb = '<span class="rot-db">GROUP BY</span>';
+  const maxItens = Math.max(1, ...d.mais_comprados.map(x => x.itens));
+  const totPets = d.especies.reduce((s, e) => s + e.n, 0) || 1, maxRaca = Math.max(1, ...d.racas.map(r => r.n));
+  el.innerHTML =
+    cabecalhoSecao("Produtos e clientes", "Compras e pets dos tutores do PatasPerto, só em totais agregados (sem dado individual).", chipsDias() + btCSV("csvProdutos")) +
+    '<div class="painel-grid">' +
+      '<div class="bloco"><h3>' + ic("carrinho") + ' O que os tutores mais compram ' + rotDb + '</h3><p class="origem">itens vendidos por produto</p>' +
+        d.mais_comprados.map((x, i) => barraH(x.nome, x.categoria + " · " + x.clientes + " tutores", x.itens, maxItens, fmtInt(x.itens), i === 0)).join("") + '</div>' +
+      '<div class="bloco"><h3>' + ic("pata") + ' Espécies e raças ' + rotDb + '</h3><p class="origem">pets cadastrados</p>' +
         d.especies.map((e, i) => barraH(NOME_ESPECIE[e.especie] || e.especie, "idade média " + num1(e.idade_media) + " anos", e.n, totPets, pct(e.n / totPets), i === 0)).join("") +
-        '<p class="sub-tit">Raças mais frequentes</p>' +
-        d.racas.map((r, i) => barraH(r.raca, NOME_ESPECIE[r.especie] || r.especie, r.n, maxRaca, fmtInt(r.n), i === 0)).join("") + '</div>' +
-      '<div class="bloco"><h3>' + ic("alvo") + ' Match categoria × espécie ' + rotDb + '</h3><p class="origem">itens por categoria dentro de cada espécie · GROUP BY espécie, categoria</p>' +
+        '<p class="sub-tit">Raças mais frequentes</p>' + d.racas.map((r, i) => barraH(r.raca, NOME_ESPECIE[r.especie] || r.especie, r.n, maxRaca, fmtInt(r.n), i === 0)).join("") + '</div>' +
+      '<div class="bloco"><h3>' + ic("alvo") + ' O que cada espécie compra ' + rotDb + '</h3><p class="origem">fatia da categoria nas compras de quem tem aquela espécie</p>' +
         Object.entries(d.match_categoria_especie).map(([esp, lista]) => '<p class="sub-tit">' + (NOME_ESPECIE[esp] || esp) + '</p>' +
           lista.map((m, i) => barraH(m.categoria, null, m.participacao, 1, pct(m.participacao) +
-            ' <span class="afin' + (m.afinidade >= 1.2 ? " alta" : "") + '" title="participação na espécie ÷ participação geral">' + num1(m.afinidade) + '×</span>', i === 0)).join("")).join("") +
-        '<p class="explica"><b>%</b> = fatia da categoria nas compras de quem tem aquela espécie. <b>×</b> = afinidade: quantas vezes acima (ou abaixo) da média geral a espécie compra a categoria.</p></div>' +
-      '<div class="bloco"><h3>' + ic("grafico") + ' Volume de compras por período ' + rotDb + '</h3>' +
-        '<div class="filtros periodo"><button class="chip' + (periodo === "mes" ? " ativo" : "") + '" data-per="mes">Por mês</button><button class="chip' + (periodo === "semana" ? " ativo" : "") + '" data-per="semana">Por semana</button></div>' +
-        '<div class="colunas">' + d.volume.map(v => '<div class="col" title="' + v.compras + ' compras · ' + fmtR$(v.valor) + '"><span class="col-v">' + v.compras + '</span>' +
-          '<div class="col-b" style="height:' + (v.compras / maxVol * 100) + '%"></div><span class="col-r">' + v.periodo + '</span></div>').join("") + '</div>' +
-        '<p class="origem" style="margin-top:8px">compras por ' + (periodo === "semana" ? "semana (início na segunda-feira)" : "mês") + ' · GROUP BY strftime(data)</p></div>' +
-    '</div>' +
-    '<div class="bloco"><h3>' + ic("cruz") + ' Sua clínica <span class="rot-db">tabela clinicas</span></h3>' +
-      '<p class="local">' + ic("mapa") + ' ' + esc(c.endereco) + ' · ' + ic("telefone") + ' ' + esc(c.telefone) + ' · ' + ic("relogio") + ' ' + (c.aberto_24h ? "24 horas" : esc(c.abre) + "–" + esc(c.fecha)) + '</p>' +
-      '<div class="chk-grupo" style="margin-top:8px">' + c.especialidades.map(e => '<span class="tag-esp">' + (ESPECIALIDADES_NOMES[e] || esc(e)) + '</span>').join("") + '</div></div>' +
-    '<div class="aviso lgpd" style="margin-top:16px">' + ic("cadeado") + ' Dados <b>fictícios</b> e <b>agregados</b>: a clínica não recebe CPF, nome nem observações de saúde de clientes individuais (LGPD).</div>';
+            ' <span class="afin' + (m.afinidade >= 1.2 ? " alta" : "") + '" title="quantas vezes acima ou abaixo da média geral">' + num1(m.afinidade) + '×</span>', i === 0)).join("")).join("") +
+        '<p class="explica"><b>×</b> = afinidade: quantas vezes acima (ou abaixo) da média geral a espécie compra a categoria.</p></div>' +
+    '</div>';
+  ligarChipsDias(el);
+  $("csvProdutos").addEventListener("click", () => baixarCSV("produtos-" + d.janela_dias + "dias.csv", ["Produto", "Categoria", "Itens", "Tutores", "Total (R$)"],
+    d.mais_comprados.map(x => [x.nome, x.categoria, x.itens, x.clientes, String(x.total).replace(".", ",")])));
+}
 
-  telas.painel.querySelectorAll("[data-per]").forEach(b => b.addEventListener("click", () => renderPainel(b.dataset.per)));
+function secaoClinica(el) {
+  const c = crm.d.clinica, horario = c.aberto_24h ? "24 horas" : c.abre + "–" + c.fecha;
+  el.innerHTML =
+    cabecalhoSecao("Minha clínica", "Seus dados e como os tutores veem a sua clínica.") +
+    '<div class="painel-grid">' +
+      '<div class="bloco"><h3>' + ic("cruz") + ' Dados da clínica</h3><table class="tabela">' +
+        '<tr><td class="rot">Nome</td><td>' + esc(c.nome) + '</td></tr><tr><td class="rot">Endereço</td><td>' + esc(c.endereco) + '</td></tr>' +
+        '<tr><td class="rot">Telefone</td><td>' + esc(c.telefone) + '</td></tr><tr><td class="rot">Horário</td><td>' + esc(horario) + '</td></tr>' +
+        '<tr><td class="rot">Especialidades</td><td>' + c.especialidades.map(e => ESPECIALIDADES_NOMES[e] || esc(e)).join(", ") + '</td></tr></table></div>' +
+      '<div class="bloco"><h3>' + ic("usuario") + ' Como os tutores veem você</h3><p class="origem">na aba Mapa, em "Clínicas parceiras PatasPerto"</p>' +
+        cartaoParceira({ id: c.id, nome: c.nome, endereco: c.endereco, telefone: c.telefone, horario_texto: c.aberto_24h ? "24h" : c.abre + "–" + c.fecha, especialidades: c.especialidades }, true) +
+        '<p class="explica">O tutor clica em <b>Quero ser contatado</b>, autoriza o envio dos dados e o pedido chega na seção <b>Contatos</b>.</p></div>' +
+    '</div>' +
+    '<div class="aviso lgpd" style="margin-top:16px">' + ic("cadeado") + ' Os números de mercado são <b>agregados</b>: a clínica não recebe CPF nem dados de saúde. Dados individuais só chegam por um pedido de contato, com autorização do tutor (LGPD).</div>';
+}
+
+/* ---- Clínicas parceiras (têm conta no PatasPerto): o tutor pede contato, com consentimento explícito ---- */
+const MOTIVOS_CONTATO = [...SITUACOES.map(([, r]) => r), "Vacinação", "Banho e tosa", "Outro"];
+
+function cartaoParceira(p, previa) {
+  return '<div class="clinica parceira' + (previa ? ' previa' : '') + '" data-parceira="' + p.id + '">' + (previa ? '<span class="selo-previa">Prévia</span>' : '') + '<div class="cl-info">' +
+    '<span class="cl-nome">' + esc(p.nome) + ' <span class="selo-parceira">Parceira PatasPerto</span></span>' +
+    '<small>' + ic("mapa") + ' ' + esc(p.endereco) + '</small>' +
+    '<small class="cl-horario">' + ic("relogio") + ' ' + esc(p.horario_texto) + '</small>' +
+    (p.telefone ? '<small><a class="cl-tel" href="' + esc(telLink(p.telefone)) + '">' + ic("telefone") + ' ' + esc(p.telefone) + '</a></small>' : '') +
+    '<small>' + ic("estetoscopio") + ' ' + p.especialidades.map(e => ESPECIALIDADES_NOMES[e] || esc(e)).join(", ") + '</small>' +
+    (previa ? '<span class="btn-prim btn-contato" aria-hidden="true" title="Prévia: o botão funciona na tela do tutor">' + ic("usuario") + ' Quero ser contatado</span>'
+      : '<button class="btn-prim btn-contato" data-contato>' + ic("usuario") + ' Quero ser contatado</button><div class="form-contato" hidden></div>') +
+    '</div></div>';
+}
+
+// `especialidade`: mostra primeiro (ou só) as parceiras que a atendem; `motivo`: já preenche o pedido de contato
+async function renderParceiras(el, { especialidade, motivo } = {}) {
+  let todas;
+  try { todas = await api("/api/parceiras"); } catch { el.innerHTML = ''; el.hidden = true; return; }
+  const atendem = especialidade ? todas.filter(p => p.especialidades.includes(especialidade)) : [];
+  const lista = atendem.length ? atendem : todas;
+  el.hidden = !lista.length;
+  if (!lista.length) { el.innerHTML = ''; return; }
+  const nomeEsp = ESPECIALIDADES_NOMES[especialidade] || especialidade;
+  el.innerHTML = '<h3 class="grupo-clin">' + ic("check") + ' ' + (atendem.length ? 'Parceiras que atendem ' + esc(nomeEsp) : 'Clínicas parceiras PatasPerto') +
+      ' <span class="qtd-grupo">' + lista.length + '</span></h3>' +
+    '<p class="info" style="padding:0 0 8px">' + (especialidade && !atendem.length ? 'Nenhuma parceira indica ' + esc(nomeEsp) + ': confirme por telefone. ' : '') +
+      'Clínicas cadastradas no PatasPerto: peça para a clínica entrar em contato com você.</p>' +
+    lista.map(p => cartaoParceira(p)).join("");
+  el.querySelectorAll("[data-contato]").forEach(b => b.addEventListener("click", () => {
+    const card = b.closest("[data-parceira]"), p = lista.find(x => x.id === +card.dataset.parceira);
+    if (!ehCliente()) { toast("Entre na sua conta de tutor para pedir contato."); abrirLogin("entrar"); return; }
+    abrirFormContato(card, p, motivo);
+  }));
+}
+
+function abrirFormContato(card, p, motivo) {
+  const f = card.querySelector(".form-contato"), perfil = lerPerfil(), id = p.id;
+  card.querySelector("[data-contato]").hidden = true; f.hidden = false;
+  f.innerHTML =
+    '<label class="rotulo" for="ctMotivo' + id + '">Motivo</label><select class="campo" id="ctMotivo' + id + '">' + MOTIVOS_CONTATO.map(m => '<option>' + esc(m) + '</option>').join("") + '</select>' +
+    '<span class="rotulo">Como prefere ser contatado?</span><div class="escolhas tres">' +
+      [["whatsapp", "pulso", "WhatsApp"], ["telefone", "telefone", "Telefone"], ["email", "recibo", "E-mail"]].map(([v, icone, nome], k) =>
+        '<label class="op-escolha"><input type="radio" name="ctVia' + id + '" value="' + v + '"' + (k === 0 ? ' checked' : '') + '>' + ic(icone) + '<span><b>' + nome + '</b></span></label>').join("") + '</div>' +
+    '<label class="rotulo" for="ctMsg' + id + '">Mensagem (opcional)</label><textarea class="campo" id="ctMsg' + id + '" rows="2" maxlength="1000" placeholder="Ex.: melhor horário para falar"></textarea>' +
+    '<label class="chk consentimento"><input type="checkbox" id="ctOk' + id + '"><span>Autorizo enviar meu <b>nome, telefone e e-mail</b> e os dados básicos do meu pet (<b>' + esc(perfil.petNome || "pet") + '</b>: espécie, raça e idade) para a <b>' + esc(p.nome) + '</b> entrar em contato comigo. Dados de saúde não são enviados.</span></label>' +
+    '<button class="btn-prim" id="ctEnviar' + id + '">Enviar pedido de contato</button><div id="ctErro' + id + '" role="alert"></div>';
+  if (MOTIVOS_CONTATO.includes(motivo)) $("ctMotivo" + id).value = motivo;
+  $("ctEnviar" + id).addEventListener("click", async () => {
+    const erro = m => { $("ctErro" + id).innerHTML = '<div class="aviso-erro">' + esc(m) + '</div>'; };
+    if (!$("ctOk" + id).checked) return erro("Marque a autorização para a clínica poder entrar em contato.");
+    const via = f.querySelector('input[name="ctVia' + id + '"]:checked').value;
+    try {
+      await api("/api/leads", { method: "POST", body: JSON.stringify({ clinica_id: id, motivo: $("ctMotivo" + id).value,
+        mensagem: $("ctMsg" + id).value, contato: via, consentimento: true }) });
+      f.innerHTML = '<div class="pedido-enviado">' + ic("check") + '<span><b>Pedido enviado!</b> A ' + esc(p.nome) + ' vai falar com você por ' + CONTATO_NOME[via] + '.</span></div>';
+    } catch (e) { erro(e.message); }
+  });
 }
 
 /* ---- Navegação ---- */
@@ -874,11 +1205,14 @@ campo.addEventListener("keydown", e => { if (e.key === "Enter") buscar(); });
    nenhum valor é cobrado e nenhum dado de cartão é pedido. */
 const FRETE_GRATIS = 100;
 const PAGAMENTO_NOME = { pix: "Pix", cartao_entrega: "cartão", dinheiro: "dinheiro" };
-let carrinho = (() => { try { return JSON.parse(localStorage.getItem("carrinho") || "[]"); } catch { return []; } })();
+// um carrinho por conta (e um para quem navega sem conta), como o perfil: chave "carrinho:<id da conta>"
+const chaveCarrinho = () => conta ? "carrinho:" + conta.id : "carrinho";
+const lerCarrinho = () => { try { return JSON.parse(localStorage.getItem(chaveCarrinho()) || "[]"); } catch { return []; } };
+let carrinho = lerCarrinho();
 const checkout = { entrega: "entrega", pagamento: "pix" };
 
 function salvarCarrinho() {
-  try { localStorage.setItem("carrinho", JSON.stringify(carrinho)); } catch {}
+  try { localStorage.setItem(chaveCarrinho(), JSON.stringify(carrinho)); } catch {}
   const q = $("qtdCarrinho"), n = carrinho.reduce((s, i) => s + i.qtd, 0);
   q.textContent = n; q.hidden = !n;
   $("btCarrinhoTopo").setAttribute("aria-label", n ? "Carrinho, " + n + " item(ns)" : "Carrinho vazio");

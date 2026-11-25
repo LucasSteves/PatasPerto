@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 CAMINHO_DB = os.path.join(AQUI, "patasperto.db")
+CAMINHO_PESQUISADAS = os.path.join(AQUI, "clinicas_pesquisadas.json")   # clínicas reais pesquisadas pela equipe
 # Servidores públicos do Overpass (mesmos dados do OpenStreetMap). Vivem sobrecarregados e oscilam
 # muito (o mesmo servidor responde em 1 s e, minutos depois, esgota o tempo): por isso os três são
 # consultados AO MESMO TEMPO e vale a primeira resposta boa (ver _consultar_overpass).
@@ -37,6 +38,9 @@ TIMEOUT_OVERPASS_S = 25   # igual ao [timeout:25] da consulta; em paralelo, é t
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "PatasPerto/1.0 (projeto academico; contato via GitHub)"
 VALIDADE_CACHE = timedelta(hours=24)
+# A região é buscada UMA vez no raio máximo e o raio escolhido é filtrado no app: trocar o raio fica
+# instantâneo e funciona mesmo com o Overpass fora do ar. É também o raio da busca por silvestres (raras).
+RAIO_BUSCA_KM = 30
 DIAS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
 
 
@@ -97,6 +101,26 @@ def inferir_especialidades(nome, opening_hours, tags):
         esp.add("nutricao")
     esp.add("clinico_geral")
     return sorted(esp)
+
+
+def atende_silvestres(nome, tags):
+    """O OpenStreetMap não registra se a clínica atende silvestres/exóticos: inferido pelo nome e pela descrição."""
+    n = _normalizar(nome) + " " + _normalizar(tags.get("description", ""))
+    return bool(re.search(r"silvestr|selvage|exotic|\baves\b|avian|ornito|reptil|repteis|herpet|fauna|wildlife", n))
+
+
+DIAS_PT = {"Mo": "seg", "Tu": "ter", "We": "qua", "Th": "qui", "Fr": "sex", "Sa": "sáb", "Su": "dom", "PH": "feriados"}
+
+
+def horario_legivel(opening_hours):
+    """opening_hours do OSM ("Mo-Fr 08:00-18:00; Sa 08:00-12:00") em português para a tela."""
+    oh = (opening_hours or "").strip()
+    if oh == "24/7":
+        return "24h"
+    oh = re.sub(r"\b(Mo|Tu|We|Th|Fr|Sa|Su|PH)\b", lambda m: DIAS_PT[m.group(1)], oh)
+    oh = re.sub(r"(\d{2}:\d{2})-(\d{2}:\d{2})", r"\1–\2", oh)        # faixa de horário
+    oh = re.sub(r"\b(seg|ter|qua|qui|sex|sáb|dom)-(seg|ter|qua|qui|sex|sáb|dom)\b", r"\1–\2", oh)  # faixa de dias
+    return oh.replace(",", ", ").replace(" off", " fechado")
 
 
 # ------------------------------------------------------- opening_hours (OSM)
@@ -214,7 +238,9 @@ def _normalizar_elemento(e, lat, lon):
         "nome": nome, "endereco": endereco,
         "telefone": t.get("phone") or t.get("contact:phone") or t.get("mobile") or "",
         "site": _link_seguro(t.get("website") or t.get("contact:website")),
-        "horario_texto": oh or "", "horario_conhecido": bool(oh), "aberto_24h": (oh or "").strip() == "24/7",
+        "opening_hours": oh or "",                     # formato do OSM, usado para calcular "aberta agora"
+        "horario_texto": horario_legivel(oh), "horario_conhecido": bool(oh), "aberto_24h": (oh or "").strip() == "24/7",
+        "atende_silvestres": atende_silvestres(nome, t), "atende_domesticos": not atende_silvestres(nome, t),
         "abre": None, "fecha": None,
         "especialidades": inferir_especialidades(nome, oh, t), "especialidade_inferida": True,
         "lat": clat, "lon": clon, "distancia_km": round(haversine_km(lat, lon, clat, clon), 2),
@@ -223,12 +249,12 @@ def _normalizar_elemento(e, lat, lon):
 
 
 def buscar_clinicas(lat, lon, raio_km=5.0, consultar=None):
-    """Clínicas reais num raio, ordenadas por distância. Usa cache de 24h."""
-    chave = f"overpass:{round(lat, 3)},{round(lon, 3)},{raio_km}"
+    """Clínicas reais num raio, ordenadas por distância. Busca a região no RAIO_BUSCA_KM (cache de 24h) e filtra aqui."""
+    chave = f"overpass:{round(lat, 3)},{round(lon, 3)},{RAIO_BUSCA_KM}"
     bruto = _cache_get(chave)
     if bruto is None:
         try:
-            bruto = (consultar or _consultar_overpass)(lat, lon, int(raio_km * 1000))
+            bruto = (consultar or _consultar_overpass)(lat, lon, RAIO_BUSCA_KM * 1000)
         except (OSError, ValueError):
             # servidores fora: a última resposta boa, mesmo com mais de 24h, vale mais que a demonstração
             # (clínica não muda de endereço de um dia para o outro)
@@ -240,6 +266,8 @@ def buscar_clinicas(lat, lon, raio_km=5.0, consultar=None):
     vistos, lista = set(), []
     for e in bruto.get("elements", []):
         c = _normalizar_elemento(e, lat, lon)
+        if c["distancia_km"] > raio_km:
+            continue
         chave_dup = (c["nome"].lower(), round(c["lat"], 4), round(c["lon"], 4))
         if chave_dup in vistos:
             continue
@@ -249,13 +277,40 @@ def buscar_clinicas(lat, lon, raio_km=5.0, consultar=None):
     return lista
 
 
+def clinicas_pesquisadas(lat, lon, raio_km):
+    """
+    Clínicas REAIS pesquisadas pela equipe (banco/clinicas_pesquisadas.json), no mesmo formato das do
+    OpenStreetMap. Cobrem o que falta no OSM (quem atende silvestres, horários, telefones) e não dependem
+    do Overpass: aparecem mesmo com ele fora do ar.
+    """
+    with open(CAMINHO_PESQUISADAS, encoding="utf-8") as f:
+        dados = json.load(f)["clinicas"]
+    lista = []
+    for i, d in enumerate(dados):
+        dist = round(haversine_km(lat, lon, d["lat"], d["lon"]), 2)
+        if dist > raio_km:
+            continue
+        oh = (d.get("opening_hours") or "").strip()
+        lista.append({
+            "id": f"equipe:{i}", "nome": d["nome"], "endereco": d["endereco"], "telefone": d.get("telefone") or "",
+            "site": _link_seguro(d.get("site")), "opening_hours": oh, "horario_texto": horario_legivel(oh),
+            "horario_conhecido": bool(oh), "aberto_24h": oh == "24/7", "abre": None, "fecha": None,
+            "especialidades": ["clinico_geral"] + (["emergencia"] if oh == "24/7" else []), "especialidade_inferida": False,
+            "atende_silvestres": bool(d.get("atende_silvestres")), "atende_domesticos": bool(d.get("atende_domesticos", True)),
+            "lat": d["lat"], "lon": d["lon"], "distancia_km": dist, "fonte": "equipe", "osm_url": "",
+            "fonte_url": _link_seguro(d.get("fonte_url")), "pesquisado_em": d.get("pesquisado_em"),
+            "verificado_por_telefone_em": d.get("verificado_por_telefone_em"), "coordenada": d.get("coordenada", ""),
+        })
+    return lista
+
+
 def anotar_abertas(clinicas, hora_hhmm):
     """Preenche aberta_agora (True/False/None) para o horário de hoje."""
     agora = datetime.now()
     h, m = hora_hhmm.split(":")
     quando = agora.replace(hour=int(h), minute=int(m))
     for c in clinicas:
-        c["aberta_agora"] = aberta_em(c["horario_texto"], quando)
+        c["aberta_agora"] = aberta_em(c["opening_hours"], quando)
     return clinicas
 
 

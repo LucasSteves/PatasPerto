@@ -52,39 +52,6 @@ def obter_oferta(oferta_id):
         return dict(r) if r else None
 
 
-# -------------------------------------------------------------- clínicas
-def _minutos(hhmm):
-    h, m = hhmm.split(":")
-    return int(h) * 60 + int(m)
-
-
-def clinica_aberta(clinica, hora):
-    """Regra de horário: trata 24h e faixas que cruzam a meia-noite (ex.: 19:00–07:00)."""
-    if clinica["aberto_24h"]:
-        return True
-    agora, abre, fecha = _minutos(hora), _minutos(clinica["abre"]), _minutos(clinica["fecha"])
-    if abre <= fecha:
-        return abre <= agora < fecha
-    return agora >= abre or agora < fecha  # cruza a meia-noite
-
-
-def listar_clinicas(especialidade=None, hora=None):
-    """Filtra clínicas por especialidade e por 'aberta no horário'. Ordena por distância."""
-    with conectar() as con:
-        clinicas = {r["id"]: dict(r) | {"especialidades": []} for r in con.execute("SELECT * FROM clinicas")}
-        for r in con.execute("SELECT * FROM clinica_especialidades"):
-            clinicas[r["clinica_id"]]["especialidades"].append(r["especialidade"])
-    lista = list(clinicas.values())
-    if especialidade:
-        lista = [c for c in lista if especialidade in c["especialidades"]]
-    if hora:
-        for c in lista:
-            c["aberta_agora"] = clinica_aberta(c, hora)
-        lista = [c for c in lista if c["aberta_agora"]]
-    lista.sort(key=lambda c: c["distancia_km"])
-    return lista
-
-
 # --------------------------------------------------------- tutor / compras
 def obter_tutor(tutor_id):
     with conectar() as con:
@@ -279,10 +246,41 @@ def _periodos(periodo, hoje):
     return meses, meses[0][0] + "-01"
 
 
-def painel_clinica(periodo="mes", janela_dias=JANELA_PAINEL_DIAS):
+def _totais_compras(con, inicio, fim):
+    """Totais de compras no intervalo [inicio, fim) — base dos indicadores comparados."""
+    d = dict(con.execute("""
+        SELECT COUNT(*) AS compras, COALESCE(ROUND(SUM(valor), 2), 0) AS faturamento,
+               COUNT(DISTINCT tutor_id) AS clientes_ativos
+          FROM compras WHERE data >= ? AND data < ?""", (inicio, fim)).fetchone())
+    d["ticket_medio"] = round(d["faturamento"] / d["compras"], 2) if d["compras"] else 0
+    return d
+
+
+def painel_clinica(periodo="mes", janela_dias=JANELA_PAINEL_DIAS, clinica_id=None):
     hoje = date.today()
     inicio = (hoje - timedelta(days=janela_dias)).isoformat()
+    inicio_ant = (hoje - timedelta(days=2 * janela_dias)).isoformat()      # período anterior, do mesmo tamanho
+    amanha = (hoje + timedelta(days=1)).isoformat()
     with conectar() as con:
+        # 0) Indicadores do período × período anterior (para as setas ↑↓ do painel)
+        atual, anterior = _totais_compras(con, inicio, amanha), _totais_compras(con, inicio_ant, inicio)
+        comparativo = {k: {"atual": atual[k], "anterior": anterior[k]} for k in atual}
+
+        # 0b) Demanda da região: o que a IA recomendou aos tutores (registro anônimo, sem tutor_id)
+        demanda = [dict(r) for r in con.execute("""
+            SELECT especialidade, SUM(data >= ?) AS atual, SUM(data < ?) AS anterior
+              FROM recomendacoes WHERE data >= ?
+             GROUP BY especialidade ORDER BY atual DESC, especialidade""", (inicio, inicio, inicio_ant))]
+        situacoes = [dict(r) for r in con.execute("""
+            SELECT situacao, COUNT(*) AS n FROM recomendacoes WHERE data >= ?
+             GROUP BY situacao ORDER BY n DESC LIMIT 6""", (inicio,))]
+
+        # 0c) Pedidos de contato desta clínica por etapa do funil
+        contatos = dict.fromkeys(STATUS_LEAD, 0)
+        if clinica_id:
+            contatos |= {r["status"]: r["n"] for r in con.execute(
+                "SELECT status, COUNT(*) AS n FROM leads WHERE clinica_id = ? GROUP BY status", (clinica_id,))}
+
         # 1) Totais da base (COUNT / SUM)
         totais = dict(con.execute("""
             SELECT (SELECT COUNT(*) FROM tutores)                                        AS clientes,
@@ -363,6 +361,83 @@ def painel_clinica(periodo="mes", janela_dias=JANELA_PAINEL_DIAS):
     volume = [{"periodo": rot, "chave": ch, "compras": por_periodo.get(ch, {}).get("compras", 0),
                "valor": por_periodo.get(ch, {}).get("valor") or 0.0} for ch, rot in rotulos]
 
-    return {"janela_dias": janela_dias, "periodo": periodo, "totais": totais, "mais_comprados": mais_comprados,
+    return {"janela_dias": janela_dias, "periodo": periodo, "totais": totais, "comparativo": comparativo,
+            "demanda_ia": {"especialidades": demanda, "situacoes": situacoes,
+                           "total_atual": sum(d["atual"] for d in demanda), "total_anterior": sum(d["anterior"] for d in demanda)},
+            "contatos": contatos, "mais_comprados": mais_comprados,
             "especies": especies, "racas": racas, "match_categoria_especie": match, "volume": volume,
             "origem": "agregações SQL (COUNT/SUM/AVG + GROUP BY) em banco/consultas.py — não é IA"}
+
+
+# ------------------------------------------------- IA: demanda anônima da região
+def registrar_recomendacao(especialidade, situacao, especie):
+    """Guarda o que a IA recomendou, SEM o tutor: só alimenta a demanda agregada do painel das clínicas."""
+    with conectar() as con:
+        con.execute("INSERT INTO recomendacoes (data, especialidade, situacao, especie) VALUES (?,?,?,?)",
+                    (date.today().isoformat(), especialidade, situacao, especie))
+
+
+# ------------------------------------------------------- CRM: pedidos de contato
+STATUS_LEAD = ("novo", "em_contato", "agendado", "atendido", "perdido")
+
+
+class PedidoJaAberto(Exception):
+    """O tutor já tem um pedido em aberto (novo ou em contato) com esta clínica."""
+
+
+def listar_parceiras():
+    """Clínicas parceiras = as que têm conta no PatasPerto (são elas que recebem pedidos de contato)."""
+    with conectar() as con:
+        ids = [r[0] for r in con.execute(
+            "SELECT DISTINCT clinica_id FROM contas WHERE tipo = 'clinica' ORDER BY clinica_id")]
+    return [obter_clinica(i) for i in ids]
+
+
+def criar_lead(clinica_id, tutor_id, motivo, mensagem, contato):
+    agora = datetime.now().isoformat(timespec="seconds")
+    with conectar() as con:
+        if not con.execute("SELECT 1 FROM contas WHERE tipo = 'clinica' AND clinica_id = ?", (clinica_id,)).fetchone():
+            raise LookupError("clínica parceira não encontrada")
+        if con.execute("""SELECT 1 FROM leads WHERE clinica_id = ? AND tutor_id = ?
+                           AND status IN ('novo', 'em_contato')""", (clinica_id, tutor_id)).fetchone():
+            raise PedidoJaAberto()
+        return con.execute("""
+            INSERT INTO leads (clinica_id, tutor_id, motivo, mensagem, contato_preferido, consentimento_em, criado_em, atualizado_em)
+            VALUES (?,?,?,?,?,?,?,?)""", (clinica_id, tutor_id, motivo, mensagem, contato, agora, agora, agora)).lastrowid
+
+
+def _leads(con, clinica_id, lead_id=None):
+    """Pedidos da clínica com o mínimo para o contato (LGPD): nome e contatos do tutor, espécie/raça/idade do pet."""
+    linhas = con.execute("""
+        SELECT l.*, t.nome AS tutor_nome, t.telefone AS tutor_telefone, COALESCE(ct.email, t.email) AS tutor_email,
+               p.nome AS pet_nome, p.especie, p.raca, p.idade_anos, p.porte
+          FROM leads l
+          JOIN tutores t ON t.id = l.tutor_id
+          LEFT JOIN contas ct ON ct.tutor_id = l.tutor_id
+          LEFT JOIN pets p ON p.id = (SELECT id FROM pets WHERE tutor_id = l.tutor_id ORDER BY id LIMIT 1)
+         WHERE l.clinica_id = ? AND (? IS NULL OR l.id = ?)   -- sem lead_id: todos os pedidos da clínica
+         ORDER BY l.criado_em DESC""", (clinica_id, lead_id, lead_id))
+    return [{"id": r["id"], "status": r["status"], "motivo": r["motivo"], "mensagem": r["mensagem"],
+             "contato_preferido": r["contato_preferido"], "nota": r["nota"], "criado_em": r["criado_em"],
+             "atualizado_em": r["atualizado_em"], "consentimento_em": r["consentimento_em"],
+             "tutor": {"nome": r["tutor_nome"], "telefone": r["tutor_telefone"] or "", "email": r["tutor_email"] or ""},
+             "pet": {"nome": r["pet_nome"], "especie": r["especie"], "raca": r["raca"] or "",
+                     "idade_anos": r["idade_anos"], "porte": r["porte"]}} for r in linhas]
+
+
+def listar_leads(clinica_id):
+    with conectar() as con:
+        return _leads(con, clinica_id)
+
+
+def atualizar_lead(clinica_id, lead_id, status=None, nota=None):
+    """Move o pedido no funil e/ou grava a anotação. Só altera pedidos DESTA clínica (senão devolve None)."""
+    with conectar() as con:
+        if not _leads(con, clinica_id, lead_id):
+            return None
+        if status is not None:
+            con.execute("UPDATE leads SET status = ? WHERE id = ?", (status, lead_id))
+        if nota is not None:
+            con.execute("UPDATE leads SET nota = ? WHERE id = ?", (nota, lead_id))
+        con.execute("UPDATE leads SET atualizado_em = ? WHERE id = ?", (datetime.now().isoformat(timespec="seconds"), lead_id))
+        return _leads(con, clinica_id, lead_id)[0]

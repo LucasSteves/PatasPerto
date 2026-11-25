@@ -2,7 +2,7 @@
 
 > Marketplace de produtos pet que conecta o cliente às lojas mais próximas — inclusive petshops de bairro sem presença online — e usa os **dados gerados pela loja** para alimentar um modelo de **Machine Learning** que recomenda a especialidade veterinária que o pet precisa.
 
-Projeto acadêmico (Projeto Prático Integrado, 2026). Dados de lojas, produtos, clínicas e compras são **fictícios**.
+Projeto acadêmico (Projeto Prático Integrado, 2026). Dados de lojas, produtos, clientes e compras são **fictícios**; as clínicas veterinárias são **reais**, do OpenStreetMap.
 
 ---
 
@@ -15,7 +15,7 @@ A loja não é enfeite: é a **fonte de dados da IA**. Cada compra registrada no
 | Pergunta | Quem responde | Onde |
 |---|---|---|
 | "Que especialidade meu pet precisa?" | **IA** — Random Forest treinado com dados sintéticos | `ml/treinar_modelo.py`, `ml/recomendador.py` |
-| "Quais clínicas dessa especialidade estão abertas às 23h?" | **Banco** — filtro SQL por especialidade e horário | `banco/consultas.py → listar_clinicas` |
+| "Quais clínicas dessa especialidade estão abertas às 23h?" | **Filtro de dados** — especialidade (inferida pelo nome) e horário de funcionamento do OpenStreetMap | `app.py → clinicas_para` |
 | "Quanto esse tutor gasta por mês em produtos de pele?" | **Banco** — agregação SQL das compras | `banco/consultas.py → historico_tutor` |
 | "Quais clínicas reais existem perto de mim?" | **Consulta a dados externos** — Overpass (OpenStreetMap) num raio, com cache no SQLite | `banco/clinicas_osm.py` |
 | "Onde ficam essas clínicas no mapa?" | **Visualização** — Leaflet desenha as coordenadas | `static/app.js → montarMapa` |
@@ -130,8 +130,7 @@ Por que Random Forest: lida com categóricas e numéricas juntas, é robusto a r
 |---|---|---|
 | `GET /` | estático | serve o app (`static/index.html`) |
 | `GET /api/ofertas` | banco | ofertas com produto, características, avaliações e loja |
-| `GET /api/clinicas?especialidade=&hora=HH:MM` | banco | clínicas de demonstração filtradas por especialidade e "aberta no horário" (trata 24h e faixas noturnas) |
-| `GET /api/clinicas?lat=&lon=&raio_km=5&hora=&so_abertas=1&meta=1` | dados externos | clínicas **reais** do OpenStreetMap ao redor da posição, com `aberta_agora` (True/False/None) e `meta` (fonte, raio, avisos) |
+| `GET /api/clinicas?lat=&lon=&raio_km=5&hora=&so_abertas=1&publico=&meta=1` | dados externos | clínicas **reais** do OpenStreetMap ao redor da posição, com horário em português (`horario_texto`), `aberta_agora` (True/False/None) e `atende_silvestres` (inferido pelo nome). `publico=domesticos` (cães e gatos) ou `silvestres` (sempre no raio de 30 km). A região é buscada uma vez em 30 km e o raio é filtrado no app. Sem lat/lon: lista vazia |
 | `GET /api/geocodificar?q=endereço` | dados externos | endereço/cidade → lat/lon/rótulo (Nominatim) |
 | `GET /api/tutores/<id>` · `/historico` | banco | tutor + pet (com lat/lon, centro do mapa); features de compra dos últimos 90 dias. Sem login: só o tutor demo (id 1); conta cliente: só o próprio tutor |
 | `POST /api/compras` `{tutor_id, oferta_id}` | banco | registra a compra — o dado que alimenta a IA (conta cliente: sempre no próprio tutor; conta clínica: 403) |
@@ -142,7 +141,10 @@ Por que Random Forest: lida com categóricas e numéricas juntas, é robusto a r
 | `POST /api/cadastro` | banco | cria conta `cliente` (+ tutor + pet) ou `clinica` (+ clínica) e já abre a sessão |
 | `POST /api/login` · `POST /api/logout` · `GET /api/sessao` | banco | login de demonstração com `flask.session`; `/api/sessao` diz quem está logado |
 | `PUT /api/perfil` | banco | (só cliente) atualiza tutor + pet da conta |
-| `GET /api/clinica/painel?periodo=mes\|semana` | **banco (agregação)** | (só clínica) mais comprados, espécies/raças, match categoria × espécie e volume por período — `GROUP BY`, **não é IA** |
+| `GET /api/clinica/painel?periodo=mes|semana&dias=30|90|180` | **banco (agregação)** | (só clínica) indicadores comparados com o período anterior, **demanda da IA na região** (tabela `recomendacoes`, anônima), contatos por etapa, mais comprados, espécies/raças e volume por período — `GROUP BY`, **não é IA** |
+| `GET /api/parceiras` | banco | clínicas parceiras (com conta no PatasPerto), para o tutor pedir contato |
+| `POST /api/leads` `{clinica_id, motivo, mensagem, contato, consentimento: true}` | banco | (só tutor logado) pedido de contato; **sem consentimento = 400**. Envia nome, contato e espécie/raça/idade do pet; nunca CPF nem saúde |
+| `GET /api/clinica/leads` · `PATCH /api/clinica/leads/<id>` `{status, nota}` | banco | (só clínica) CRM: os pedidos **desta** clínica e o funil novo → em contato → agendado → atendido/perdido |
 
 ---
 
@@ -161,7 +163,7 @@ Por que Random Forest: lida com categóricas e numéricas juntas, é robusto a r
 |---|---|
 | Chave da sessão fora do código | `PATASPERTO_SECRET_KEY` ou `banco/.chave_secreta`, gerada na 1ª execução e fora do Git |
 | Senhas | só o hash (`werkzeug.security`); sem conta, o login compara com um hash falso para não revelar quais e-mails existem |
-| Limite de tentativas | 5 senhas erradas em 5 min e 10 cadastros por hora, por IP → `429` (na memória do processo) |
+| Limite de tentativas | 5 senhas erradas em 1 min e 10 cadastros por hora, por IP → `429` (na memória do processo) |
 | Cada um só vê o seu | o servidor ignora o `tutor_id` enviado pela tela e usa o da conta logada |
 | Validação no servidor | quantidades, horários, situação, idade, coordenadas, tamanhos de texto; corpo acima de 64 KB → `413` |
 | Erros sem detalhe | a API responde JSON genérico; o traceback fica só no log do servidor |
@@ -178,18 +180,23 @@ Os ataques estão testados em `tests/test_seguranca.py`. A análise estática ro
 
 A aba **🗺️ Mapa** mostra a sua posição (📍), anéis de 1 km e 2 km e as clínicas veterinárias (🏥) num raio configurável (2 a 20 km), com filtros de especialidade, horário e "só abertas". O mesmo mapa aparece embutido no resultado da Recomendação e na lista da Emergência. Clicar num marcador abre a ficha: distância, telefone (clicável), site, horário, especialidades, "Como chegar" (Google Maps) e o link do ponto no OpenStreetMap.
 
-**Duas fontes de dados, sempre rotuladas na tela:**
+**Só clínicas reais.** Nunca aparecem clínicas fictícias no lugar:
 
-| Situação | Sua posição | Clínicas | Rótulo |
-|---|---|---|---|
-| Você definiu a localização (📡 GPS do navegador ou endereço digitado → Nominatim) | real | **reais**, do OpenStreetMap via Overpass API (`amenity=veterinary`), com cache de 24 h no SQLite | `dados reais · OpenStreetMap` |
-| Sem localização definida, ou sem internet | endereço fictício em Sumaré-SP | 8 clínicas fictícias da tabela `clinicas` | `dados de demonstração` |
+| Situação | O que aparece |
+|---|---|
+| Você definiu a localização (GPS do navegador ou cidade digitada → Nominatim) | clínicas **reais** do OpenStreetMap via Overpass API (`amenity=veterinary`), com cache de 24 h no SQLite |
+| Sem localização definida | nenhuma clínica, só o pedido "use o GPS ou digite sua cidade" (na Emergência, os botões aparecem na própria tela) |
+| Overpass fora do ar | as últimas clínicas guardadas para a região (mesmo com mais de 24 h); sem nada guardado, a lista fica vazia com um aviso |
+
+**Duas fontes de clínicas reais:**
+- **Pesquisadas pela equipe** (`banco/clinicas_pesquisadas.json`): cobrem o que falta no OpenStreetMap, como quem atende **silvestres e exóticos**, horários e telefones. Aparecem primeiro, com o selo "Pesquisada pela equipe" e o link da fonte, e **não dependem do Overpass**. Para incluir uma clínica, edite o JSON (instruções no próprio arquivo). Depois de confirmar por telefone, preencha `verificado_por_telefone_em`.
+- **OpenStreetMap**: o resto, em qualquer cidade. Os 3 servidores públicos do Overpass são consultados ao mesmo tempo (vale a primeira resposta boa). As contas de clínica do PatasPerto servem ao painel de indicadores e **não** entram nessa lista.
 
 Limitações declaradas (e mostradas no app):
-- O OpenStreetMap **não registra especialidade**. Ela é **inferida pelo nome/horário** ("odonto" → odontologia, "hospital"/"24h" → emergência, etc.) e marcada com asterisco; sem correspondência, a recomendação mostra todas as clínicas próximas com um aviso. Confirme por telefone.
+- O OpenStreetMap **não registra especialidade**. Ela é **inferida pelo nome/horário** ("odonto" → odontologia, "hospital"/"24h" → emergência, etc.) e marcada com asterisco. Por isso o filtro de especialidade do mapa costuma zerar (a maioria das clínicas vira só "clínico geral"); a tela explica o motivo. Na recomendação, sem correspondência, aparecem todas as clínicas próximas com um aviso. Confirme por telefone.
 - Muitas clínicas não têm horário no OSM → aparecem como "horário ?" e não são descartadas pelo filtro "só abertas".
 - A cobertura depende do que voluntários mapearam na sua região; o raio pode ser ampliado.
-- Leaflet é servido localmente; ruas, Overpass e Nominatim precisam de internet. Sem internet, o app cai automaticamente para os dados de demonstração e o mapa fica quadriculado.
+- Leaflet é servido localmente; ruas, Overpass e Nominatim precisam de internet. **Para apresentar sem internet**, abra antes, com internet, o mapa da cidade da apresentação: as clínicas ficam guardadas no cache e aparecem mesmo offline (o mapa fica quadriculado).
 - Lojas e ofertas continuam fictícias (não há fonte pública de preços de petshops).
 
 Atalhos por URL: `/#mapa`, `/#recomendacao`, `/#emergencia`, `/#perfil`; `/#recomendacao/convulsao` já abre a aba com a situação escolhida e dispara a recomendação (útil na apresentação).
@@ -203,7 +210,7 @@ Atalhos por URL: `/#mapa`, `/#recomendacao`, `/#emergencia`, `/#perfil`; `/#reco
    - Loja: buscar "antipulgas", ordenar por preço/distância, abrir o produto (dados vêm do SQLite).
    - Recomendação: pet cão, 6 anos, situação "check-up" → clínico geral (~70%).
    - Comprar 1× **Antipulgas** na Loja e pedir a recomendação de novo → **dermatologia (~85%)**. A compra mudou a IA.
-   - Trocar a situação para "convulsão" às 03:00 → emergência + só clínicas 24h/plantão (filtro do banco), já desenhadas no mapa.
+   - Com a localização definida, trocar a situação para "convulsão" → emergência + clínicas reais abertas agora, já desenhadas no mapa.
    - Aba **Mapa** (`/#mapa`): clicar em "📡 Usar meu GPS" (ou digitar a cidade) → clínicas **reais** ao redor; filtrar por especialidade/horário/raio; clicar numa clínica para centralizar e abrir a ficha com telefone e rota.
 5. **Decisões e limitações** — dados sintéticos declarados; ruído de 8%; horário fora do modelo; próximos passos (segmentação de clientes com KMeans para o público-alvo da clínica; persistir o perfil no banco).
 
