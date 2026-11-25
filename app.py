@@ -36,6 +36,12 @@ import recomendador  # noqa: E402
 from gerar_dataset import SITUACOES  # noqa: E402  (as situações que o modelo conhece)
 
 app = Flask(__name__, static_folder=os.path.join(AQUI, "static"), static_url_path="/static")
+if os.environ.get("PATASPERTO_PROXY") == "1":
+    # Na nuvem (Render) todo acesso chega por um proxy: sem isto, request.remote_addr seria sempre o IP dele e o
+    # limite de tentativas bloquearia TODOS os usuários juntos. Só ligar atrás de um proxy confiável (1 salto):
+    # fora dele, qualquer um poderia forjar o cabeçalho X-Forwarded-For e fugir do limite.
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 
 
 def _chave_secreta():

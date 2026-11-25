@@ -17,3 +17,10 @@ Marketplace pet acadêmico: Flask + SQLite + Random Forest (scikit-learn). Front
 - Toda compra vai para a tabela `compras`, que alimenta a IA. A IA indica a especialidade; o banco filtra as clínicas. Mantenha essa separação visível na interface (rótulos "IA" × "consulta ao banco").
 - Cores só por variáveis CSS; ícones por `ic()`, nunca emoji (ver `DESIGN.md`).
 - Arquivos gerados (`patasperto.db`, `dataset.csv`, `modelo.pkl`, `metricas.json`) ficam fora do Git.
+
+## Publicação (Render)
+
+- `render.yaml` configura tudo: o Render instala, cria o banco, gera o dataset, treina o modelo e sobe com `gunicorn` (1 processo). Cada `git push` na branch `redesign-salsicha-checkout` do fork publica de novo.
+- Plano grátis: o site dorme após 15 min sem acesso (o 1º acesso leva ~1 min) e o banco volta ao estado inicial a cada publicação.
+- `PATASPERTO_PROXY=1` só no Render: faz o app ler o IP real de cada usuário. Nunca ligar fora de um proxy confiável.
+- `noindex` na página e no cabeçalho: o site fica fora do Google e só abre com o link.

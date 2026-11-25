@@ -1,0 +1,26 @@
+# Publicação no Render (https://render.com): "New → Blueprint" e escolher este repositório.
+# Cada git push na branch abaixo publica de novo sozinho (como a Vercel na barbearia).
+# Plano grátis: o site "dorme" após 15 min sem acesso (o 1º acesso depois leva ~1 min) e o banco
+# volta ao estado inicial a cada nova publicação — ok para uma demonstração acadêmica.
+services:
+  - type: web
+    name: patasperto
+    runtime: python
+    plan: free
+    branch: redesign-salsicha-checkout
+    # instala, cria o banco de demonstração, gera o dataset e treina o modelo (o mesmo que o preparar.sh faz)
+    buildCommand: pip install -r requirements.txt && python banco/criar_banco.py && python ml/gerar_dataset.py && python ml/treinar_modelo.py
+    # 1 processo só: o banco é SQLite e o limite de tentativas fica na memória do processo
+    startCommand: gunicorn app:app --workers 1 --threads 4 --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/sessao
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: PYTHONUTF8
+        value: "1"
+      - key: PATASPERTO_SECRET_KEY   # chave da sessão gerada pelo Render, fora do código
+        generateValue: true
+      - key: PATASPERTO_HTTPS        # cookie de sessão só por HTTPS
+        value: "1"
+      - key: PATASPERTO_PROXY        # lê o IP real de cada usuário (ver app.py)
+        value: "1"
